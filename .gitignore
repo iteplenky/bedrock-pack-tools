@@ -1,0 +1,5 @@
+# Compiled binary
+bedrock-pack-tools
+
+# Xbox Live auth token (sensitive)
+.xbox_token.json
