@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,17 +21,15 @@ type contentsFile struct {
 	Content []contentsEntry `json:"content"`
 }
 
-type keyEntry struct {
-	Key     string `json:"key"`
-	Version string `json:"version"`
-	Name    string `json:"name"`
-}
+// contentsHeaderSize is the binary header (magic + pack UUID) prepended
+// to the encrypted JSON in contents.json.
+const contentsHeaderSize = 256
 
 func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
-	if len(data) < 0x100 {
+	if len(data) < contentsHeaderSize {
 		return nil, fmt.Errorf("contents.json too small (%d bytes)", len(data))
 	}
-	encrypted := data[0x100:]
+	encrypted := data[contentsHeaderSize:]
 	plaintext, err := decryptAES256CFB8(encrypted, []byte(packKey))
 	if err != nil {
 		return nil, fmt.Errorf("decrypt contents.json: %w", err)
@@ -48,7 +47,7 @@ func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
 	return &contents, nil
 }
 
-func runDecrypt(args []string) {
+func runDecrypt(args []string) error {
 	if len(args) < 1 {
 		fmt.Println(`Usage:
   bedrock-pack-tools decrypt <pack-dir> <key> [output-dir]
@@ -60,32 +59,30 @@ Decrypt a single encrypted resource pack:
 Batch-decrypt all packs matched by a keys.json file:
   bedrock-pack-tools decrypt --all my_keys.json ./my_packs/
   bedrock-pack-tools decrypt --all my_keys.json ./my_packs/ ./decrypted/`)
-		os.Exit(1)
+		return errUsage
 	}
 
 	if args[0] == "--all" {
 		if len(args) < 3 {
 			fmt.Println("Usage: bedrock-pack-tools decrypt --all <keys.json> <packs-dir> [output-dir]")
-			os.Exit(1)
+			return errUsage
 		}
 		outDir := ""
 		if len(args) > 3 {
 			outDir = args[3]
 		}
-		decryptAll(args[1], args[2], outDir)
-	} else {
-		if len(args) < 2 {
-			fmt.Println("Usage: bedrock-pack-tools decrypt <pack-dir> <key> [output-dir]")
-			os.Exit(1)
-		}
-		packDir := args[0]
-		packKey := args[1]
-		outDir := packDir + "_decrypted"
-		if len(args) > 2 {
-			outDir = args[2]
-		}
-		decryptPack(packDir, packKey, outDir)
+		return decryptAll(args[1], args[2], outDir)
 	}
+
+	if len(args) < 2 {
+		fmt.Println("Usage: bedrock-pack-tools decrypt <pack-dir> <key> [output-dir]")
+		return errUsage
+	}
+	outDir := args[0] + "_decrypted"
+	if len(args) > 2 {
+		outDir = args[2]
+	}
+	return decryptPack(args[0], args[1], outDir)
 }
 
 type packJob struct {
@@ -95,16 +92,14 @@ type packJob struct {
 	outDir string
 }
 
-func decryptAll(keysFile, cacheDir, outBase string) {
+func decryptAll(keysFile, cacheDir, outBase string) error {
 	data, err := os.ReadFile(keysFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", keysFile, err)
-		os.Exit(1)
+		return fmt.Errorf("read %s: %w", keysFile, err)
 	}
 	var keys map[string]keyEntry
 	if err := json.Unmarshal(data, &keys); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", keysFile, err)
-		os.Exit(1)
+		return fmt.Errorf("parse %s: %w", keysFile, err)
 	}
 
 	if outBase == "" {
@@ -113,8 +108,7 @@ func decryptAll(keysFile, cacheDir, outBase string) {
 
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", cacheDir, err)
-		os.Exit(1)
+		return fmt.Errorf("read %s: %w", cacheDir, err)
 	}
 
 	var jobs []packJob
@@ -123,14 +117,12 @@ func decryptAll(keysFile, cacheDir, outBase string) {
 			continue
 		}
 		packDir := filepath.Join(cacheDir, entry.Name())
-		contentsPath := filepath.Join(packDir, "contents.json")
 
-		if _, err := os.Stat(contentsPath); err != nil {
+		if _, err := os.Stat(filepath.Join(packDir, contentsJSON)); err != nil {
 			continue
 		}
 
-		manifestPath := filepath.Join(packDir, "manifest.json")
-		mdata, err := os.ReadFile(manifestPath)
+		mdata, err := os.ReadFile(filepath.Join(packDir, manifestJSON))
 		if err != nil {
 			continue
 		}
@@ -143,10 +135,10 @@ func decryptAll(keysFile, cacheDir, outBase string) {
 			continue
 		}
 
-		uid := manifest.Header.UUID
-		keyInfo, ok := keys[uid]
+		keyInfo, ok := keys[manifest.Header.UUID]
 		if !ok {
-			fmt.Printf("  \033[33m[SKIP]\033[0m %s — no key for UUID %s\n", entry.Name(), uid)
+			fmt.Printf("  %s[SKIP]%s %s — no key for UUID %s\n",
+				colorYellow, colorReset, entry.Name(), manifest.Header.UUID)
 			continue
 		}
 
@@ -160,19 +152,16 @@ func decryptAll(keysFile, cacheDir, outBase string) {
 
 	if len(jobs) == 0 {
 		fmt.Println("  No packs matched.")
-		return
+		return nil
 	}
 
-	workers := runtime.NumCPU()
-	if workers > len(jobs) {
-		workers = len(jobs)
-	}
+	workers := min(runtime.NumCPU(), len(jobs))
 
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		matched int
-		jobCh   = make(chan packJob, len(jobs))
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		succeeded int
+		jobCh     = make(chan packJob, len(jobs))
 	)
 
 	for _, j := range jobs {
@@ -189,11 +178,11 @@ func decryptAll(keysFile, cacheDir, outBase string) {
 
 				mu.Lock()
 				if err != nil {
-					fmt.Printf("  \033[31m[ERROR]\033[0m %s: %v\n", job.name, err)
+					fmt.Printf("  %s[ERROR]%s %s: %v\n", colorRed, colorReset, job.name, err)
 				} else {
-					fmt.Printf("  \033[36m[OK]\033[0m %s (%d decrypted, %d copied, %d errors)\n",
-						job.name, stats.decrypted, stats.copied, stats.errors)
-					matched++
+					fmt.Printf("  %s[OK]%s %s (%d decrypted, %d copied, %d errors)\n",
+						colorCyan, colorReset, job.name, stats.decrypted, stats.copied, stats.errors)
+					succeeded++
 				}
 				mu.Unlock()
 			}
@@ -201,10 +190,11 @@ func decryptAll(keysFile, cacheDir, outBase string) {
 	}
 
 	wg.Wait()
-	fmt.Printf("\n  Decrypted %d/%d packs -> %s\n", matched, len(jobs), outBase)
+	fmt.Printf("\n  Decrypted %d/%d packs -> %s\n", succeeded, len(jobs), outBase)
+	return nil
 }
 
-func decryptPack(packDir, packKey, outDir string) {
+func decryptPack(packDir, packKey, outDir string) error {
 	fmt.Println()
 	fmt.Println("  Pack:   " + packDir)
 	fmt.Println("  Key:    " + packKey)
@@ -213,11 +203,11 @@ func decryptPack(packDir, packKey, outDir string) {
 
 	stats, err := decryptPackInner(packDir, packKey, outDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  \033[31mError: %v\033[0m\n", err)
-		os.Exit(1)
+		return err
 	}
 	fmt.Printf("  Done! %d decrypted, %d copied, %d errors\n",
 		stats.decrypted, stats.copied, stats.errors)
+	return nil
 }
 
 type packStats struct {
@@ -227,7 +217,7 @@ type packStats struct {
 }
 
 func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
-	contentsData, err := os.ReadFile(filepath.Join(packDir, "contents.json"))
+	contentsData, err := os.ReadFile(filepath.Join(packDir, contentsJSON))
 	if err != nil {
 		return packStats{}, fmt.Errorf("read contents.json: %w", err)
 	}
@@ -241,57 +231,65 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 		return packStats{}, fmt.Errorf("create output dir: %w", err)
 	}
 
+	var (
+		decrypted atomic.Int32
+		copied    atomic.Int32
+		errCount  atomic.Int32
+	)
+
+	cj, err := json.MarshalIndent(contents, "", "  ")
+	if err != nil {
+		return packStats{}, fmt.Errorf("marshal contents.json: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, contentsJSON), cj, 0644); err != nil {
+		return packStats{}, fmt.Errorf("write contents.json: %w", err)
+	}
+	copied.Add(1)
+
 	type fileJob struct {
 		entry   contentsEntry
 		srcPath string
 		dstPath string
 	}
 
-	var jobs []fileJob
+	jobCh := make(chan fileJob, runtime.NumCPU())
+
+	var wg sync.WaitGroup
+	for range min(runtime.NumCPU(), len(contents.Content)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobCh {
+				wasDecrypted, err := processFile(job.entry, job.srcPath, job.dstPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, job.entry.Path, err)
+					errCount.Add(1)
+					continue
+				}
+				if wasDecrypted {
+					decrypted.Add(1)
+				} else {
+					copied.Add(1)
+				}
+			}
+		}()
+	}
+
 	for _, entry := range contents.Content {
-		jobs = append(jobs, fileJob{
+		if entry.Path == contentsJSON {
+			continue
+		}
+		jobCh <- fileJob{
 			entry:   entry,
 			srcPath: filepath.Join(packDir, entry.Path),
 			dstPath: filepath.Join(outDir, entry.Path),
-		})
+		}
 	}
-
-	var (
-		decrypted atomic.Int32
-		copied    atomic.Int32
-		errCount  atomic.Int32
-		wg        sync.WaitGroup
-		mu        sync.Mutex
-		sem       = make(chan struct{}, runtime.NumCPU())
-	)
-
-	for _, job := range jobs {
-		wg.Add(1)
-		go func(j fileJob) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			if err := processFile(j.entry, j.srcPath, j.dstPath, contents); err != nil {
-				mu.Lock()
-				fmt.Fprintf(os.Stderr, "    \033[31m[ERR]\033[0m %s: %v\n", j.entry.Path, err)
-				mu.Unlock()
-				errCount.Add(1)
-				return
-			}
-
-			switch {
-			case j.entry.Path == "contents.json" || j.entry.Path == "manifest.json" || j.entry.Key == "":
-				copied.Add(1)
-			default:
-				decrypted.Add(1)
-			}
-		}(job)
-	}
-
+	close(jobCh)
 	wg.Wait()
 
 	if err := copyPackIcon(packDir, outDir); err != nil {
+		fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, packIconPNG, err)
 		errCount.Add(1)
 	}
 
@@ -302,47 +300,56 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 	}, nil
 }
 
-func processFile(entry contentsEntry, srcPath, dstPath string, contents *contentsFile) error {
+func processFile(entry contentsEntry, srcPath, dstPath string) (decrypted bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
-		return err
-	}
-
-	if entry.Path == "contents.json" {
-		cj, err := json.MarshalIndent(contents, "", "  ")
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(dstPath, cj, 0644)
+		return false, err
 	}
 
 	raw, err := os.ReadFile(srcPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if entry.Key == "" || entry.Path == "manifest.json" {
-		return os.WriteFile(dstPath, raw, 0644)
+	if entry.Key == "" || entry.Path == manifestJSON {
+		return false, os.WriteFile(dstPath, raw, 0644)
 	}
 
 	dec, err := decryptAES256CFB8(raw, []byte(entry.Key))
 	if err != nil {
-		return fmt.Errorf("decrypt %s: %w", entry.Path, err)
+		return false, fmt.Errorf("decrypt %s: %w", entry.Path, err)
 	}
-	return os.WriteFile(dstPath, dec, 0644)
+	return true, os.WriteFile(dstPath, dec, 0644)
 }
 
 func copyPackIcon(packDir, outDir string) error {
-	iconSrc := filepath.Join(packDir, "pack_icon.png")
-	iconDst := filepath.Join(outDir, "pack_icon.png")
+	iconSrc := filepath.Join(packDir, packIconPNG)
+	iconDst := filepath.Join(outDir, packIconPNG)
 	if _, err := os.Stat(iconSrc); err != nil {
 		return nil
 	}
 	if _, err := os.Stat(iconDst); err == nil {
 		return nil
 	}
-	raw, err := os.ReadFile(iconSrc)
+	return copyFile(iconSrc, iconDst)
+}
+
+func copyFile(src, dst string) (err error) {
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(iconDst, raw, 0644)
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+	}()
+
+	_, err = io.Copy(out, in)
+	return err
 }

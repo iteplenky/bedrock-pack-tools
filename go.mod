@@ -8,6 +8,8 @@ require (
 	golang.org/x/oauth2 v0.36.0
 )
 
+replace github.com/sandertv/gophertunnel => github.com/iteplenky/gophertunnel v1.54.0-patched
+
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
 	github.com/df-mc/go-playfab v1.0.0 // indirect

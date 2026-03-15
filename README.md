@@ -1,6 +1,6 @@
 # Bedrock Pack Tools
 
-Dump encryption keys from Minecraft Bedrock servers and decrypt their resource packs.
+Dump encryption keys, download and decrypt Minecraft Bedrock server resource packs.
 
 ## How It Works
 
@@ -8,7 +8,7 @@ Many Bedrock servers send encrypted resource packs to clients. Each pack is encr
 with AES-256-CFB8, and the keys are transmitted during the connection handshake.
 
 This tool connects to a server as a regular Bedrock client (with Xbox Live authentication),
-captures the encryption keys, and can then decrypt the downloaded packs offline.
+downloads resource packs, captures the encryption keys, and decrypts the packs offline.
 
 ### Encryption Format
 
@@ -25,10 +25,14 @@ The IV for CFB8 is the first 16 bytes of the 32-byte key.
 
 ### Pre-built binaries
 
-Download from [Releases](https://github.com/iteplenky/bedrock-pack-tools/releases) and make executable:
+Download from [Releases](https://github.com/iteplenky/bedrock-pack-tools/releases):
 
 ```bash
+# macOS / Linux
 chmod +x bedrock-pack-tools-*
+./bedrock-pack-tools_linux_amd64 --version
+
+# Windows — just run the .exe
 ```
 
 ### From source
@@ -36,21 +40,30 @@ chmod +x bedrock-pack-tools-*
 Requires **Go 1.25+** ([install](https://go.dev/dl/)):
 
 ```bash
-go install github.com/iteplenky/bedrock-pack-tools@latest
+git clone https://github.com/iteplenky/bedrock-pack-tools.git
+cd bedrock-pack-tools
+go build -o bedrock-pack-tools .
 ```
 
 ### Xbox Live account
 
-Required to authenticate with Bedrock servers (for the `keys` command).
+Required to authenticate with Bedrock servers (for the `keys` and `download` commands).
 
 ## Quick Start
 
 ```bash
-# 1. Dump keys from a server
-bedrock-pack-tools keys play.example.net:19132
+# Download all packs from a server (keys are saved automatically)
+bedrock-pack-tools download <server:port> ./packs/
 
-# 2. Decrypt packs using the dumped keys
-bedrock-pack-tools decrypt --all play_example_net_19132_keys.json ./my_packs/
+# Decrypt the downloaded packs
+bedrock-pack-tools decrypt --all ./packs/server_keys.json ./packs/
+```
+
+Or if you only need the keys (e.g. to decrypt packs from a local cache):
+
+```bash
+bedrock-pack-tools keys <server:port>
+bedrock-pack-tools decrypt --all server_keys.json ./my_packs/
 ```
 
 ## Commands
@@ -72,10 +85,37 @@ cached in `.xbox_token.json` so you only need to authenticate once.
 
 ```bash
 # Dump keys, auto-named output
-bedrock-pack-tools keys play.example.net:19132
+bedrock-pack-tools keys <server:port>
 
 # Dump keys to a specific file
-bedrock-pack-tools keys play.example.net:19132 my_server_keys.json
+bedrock-pack-tools keys <server:port> my_server_keys.json
+```
+
+### `download` — Download Resource Packs
+
+```bash
+bedrock-pack-tools download [-v] <server:port> [output-dir]
+```
+
+Connects to a Bedrock server, downloads all resource packs, and extracts them to disk.
+Also saves encryption keys. Supports both protocol-level pack transfer and CDN fallback.
+
+Output directory will contain one folder per pack: `Name_vVersion/`.
+
+**Flags:**
+- `-v, --verbose` — Show all packet IDs for debugging
+
+**Examples:**
+
+```bash
+# Download all packs from a server
+bedrock-pack-tools download <server:port>
+
+# Download to a specific directory
+bedrock-pack-tools download <server:port> ./packs/
+
+# Verbose mode for debugging
+bedrock-pack-tools download -v <server:port>
 ```
 
 ### `decrypt` — Decrypt Resource Packs
@@ -118,13 +158,11 @@ The `keys` command outputs JSON mapping pack UUIDs to their encryption info:
 }
 ```
 
-## Building from Source
+## Environment Variables
 
-```bash
-git clone https://github.com/iteplenky/bedrock-pack-tools.git
-cd bedrock-pack-tools
-go build -o bedrock-pack-tools .
-```
+| Variable | Effect |
+|---|---|
+| `NO_COLOR` | Disable all ANSI colors and escape codes in output ([no-color.org](https://no-color.org/)) |
 
 ## License
 
@@ -134,5 +172,7 @@ go build -o bedrock-pack-tools .
 
 - The `.xbox_token.json` file contains your auth token — do not share it.
 - Keys are specific to a server. Different servers use different keys.
+- Some servers use CDN URLs for pack delivery instead of the protocol; `download` handles both modes.
 - Packs without encryption are listed but not included in the keys output.
+- Uses a [patched gophertunnel](https://github.com/iteplenky/gophertunnel/tree/fix/deferred-packet-race) fork to fix a handshake deadlock with certain servers.
 - This tool is for personal/educational use. Respect content creators' rights.

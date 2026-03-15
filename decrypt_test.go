@@ -20,7 +20,7 @@ func TestDecryptContentsJSON(t *testing.T) {
 
 	ciphertext := encryptAES256CFB8(payload, testKey)
 
-	header := make([]byte, 0x100)
+	header := make([]byte, contentsHeaderSize)
 	data := append(header, ciphertext...)
 
 	result, err := decryptContentsJSON(data, string(testKey))
@@ -47,7 +47,7 @@ func TestDecryptContentsJSON_TooSmall(t *testing.T) {
 
 func TestDecryptContentsJSON_InvalidJSON(t *testing.T) {
 	garbage := encryptAES256CFB8([]byte("not json {{{"), testKey)
-	header := make([]byte, 0x100)
+	header := make([]byte, contentsHeaderSize)
 	data := append(header, garbage...)
 
 	_, err := decryptContentsJSON(data, string(testKey))
@@ -62,7 +62,7 @@ func TestDecryptContentsJSON_TrailingNulls(t *testing.T) {
 	payload = append(payload, 0, 0, 0, '\n', ' ')
 
 	ciphertext := encryptAES256CFB8(payload, testKey)
-	header := make([]byte, 0x100)
+	header := make([]byte, contentsHeaderSize)
 	data := append(header, ciphertext...)
 
 	result, err := decryptContentsJSON(data, string(testKey))
@@ -83,11 +83,13 @@ func TestProcessFile_CopyPlain(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "readme.txt"), []byte("hello world"), 0644)
 
 	entry := contentsEntry{Path: "readme.txt", Key: ""}
-	contents := &contentsFile{Content: []contentsEntry{entry}}
 
-	err := processFile(entry, filepath.Join(srcDir, "readme.txt"), filepath.Join(dstDir, "readme.txt"), contents)
+	decrypted, err := processFile(entry, filepath.Join(srcDir, "readme.txt"), filepath.Join(dstDir, "readme.txt"))
 	if err != nil {
 		t.Fatalf("processFile error: %v", err)
+	}
+	if decrypted {
+		t.Error("plain file should not be reported as decrypted")
 	}
 
 	got, _ := os.ReadFile(filepath.Join(dstDir, "readme.txt"))
@@ -108,43 +110,18 @@ func TestProcessFile_DecryptEncrypted(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "data.json"), ciphertext, 0644)
 
 	entry := contentsEntry{Path: "data.json", Key: fileKey}
-	contents := &contentsFile{Content: []contentsEntry{entry}}
 
-	err := processFile(entry, filepath.Join(srcDir, "data.json"), filepath.Join(dstDir, "data.json"), contents)
+	decrypted, err := processFile(entry, filepath.Join(srcDir, "data.json"), filepath.Join(dstDir, "data.json"))
 	if err != nil {
 		t.Fatalf("processFile error: %v", err)
+	}
+	if !decrypted {
+		t.Error("encrypted file should be reported as decrypted")
 	}
 
 	got, _ := os.ReadFile(filepath.Join(dstDir, "data.json"))
 	if string(got) != string(plaintext) {
 		t.Errorf("got %q, want %q", got, plaintext)
-	}
-}
-
-func TestProcessFile_ContentsJSON(t *testing.T) {
-	tmp := t.TempDir()
-	dstDir := filepath.Join(tmp, "dst")
-
-	contents := &contentsFile{
-		Content: []contentsEntry{
-			{Path: "contents.json", Key: ""},
-			{Path: "a.png", Key: "KEYKEYKEYKEYKEYKEYKEYKEYKEYKEY32"},
-		},
-	}
-	entry := contentsEntry{Path: "contents.json", Key: ""}
-
-	err := processFile(entry, "", filepath.Join(dstDir, "contents.json"), contents)
-	if err != nil {
-		t.Fatalf("processFile error: %v", err)
-	}
-
-	data, _ := os.ReadFile(filepath.Join(dstDir, "contents.json"))
-	var result contentsFile
-	if err := json.Unmarshal(data, &result); err != nil {
-		t.Fatalf("output is not valid JSON: %v", err)
-	}
-	if len(result.Content) != 2 {
-		t.Errorf("expected 2 entries in written contents.json, got %d", len(result.Content))
 	}
 }
 
@@ -158,11 +135,13 @@ func TestProcessFile_ManifestCopiedPlain(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "manifest.json"), []byte(manifest), 0644)
 
 	entry := contentsEntry{Path: "manifest.json", Key: "some-key-that-should-be-ignored!"}
-	contents := &contentsFile{Content: []contentsEntry{entry}}
 
-	err := processFile(entry, filepath.Join(srcDir, "manifest.json"), filepath.Join(dstDir, "manifest.json"), contents)
+	decrypted, err := processFile(entry, filepath.Join(srcDir, "manifest.json"), filepath.Join(dstDir, "manifest.json"))
 	if err != nil {
 		t.Fatalf("processFile error: %v", err)
+	}
+	if decrypted {
+		t.Error("manifest.json should be copied plain, not reported as decrypted")
 	}
 
 	got, _ := os.ReadFile(filepath.Join(dstDir, "manifest.json"))
