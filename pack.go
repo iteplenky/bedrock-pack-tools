@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -14,12 +15,24 @@ import (
 )
 
 const (
-	contentsJSON = "contents.json"
-	manifestJSON = "manifest.json"
-	packIconPNG  = "pack_icon.png"
-	keysSuffix   = "_keys.json"
-	mcpackExt    = ".mcpack"
+	contentsJSON       = "contents.json"
+	manifestJSON       = "manifest.json"
+	packIconPNG        = "pack_icon.png"
+	keysSuffix         = "_keys.json"
+	mcpackExt          = ".mcpack"
+	contentsHeaderSize = 256
 )
+
+var contentsHeaderMagic = [4]byte{0xFC, 0xB9, 0xCF, 0x9B}
+
+type contentsEntry struct {
+	Path string `json:"path"`
+	Key  string `json:"key"`
+}
+
+type contentsFile struct {
+	Content []contentsEntry `json:"content"`
+}
 
 type keyEntry struct {
 	Key     string `json:"key"`
@@ -128,6 +141,25 @@ func collectKeys(packs []protocol.TexturePackInfo) map[string]keyEntry {
 		}
 	}
 	return keys
+}
+
+func readPackUUID(packDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(packDir, manifestJSON))
+	if err != nil {
+		return "", fmt.Errorf("read manifest.json: %w", err)
+	}
+	var manifest struct {
+		Header struct {
+			UUID string `json:"uuid"`
+		} `json:"header"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("parse manifest.json: %w", err)
+	}
+	if manifest.Header.UUID == "" {
+		return "", fmt.Errorf("manifest.json has no header.uuid")
+	}
+	return manifest.Header.UUID, nil
 }
 
 func saveKeys(keys map[string]keyEntry, path string) error {

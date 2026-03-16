@@ -1,6 +1,6 @@
 # Bedrock Pack Tools
 
-Dump encryption keys, download and decrypt Minecraft Bedrock server resource packs.
+Dump encryption keys, download, decrypt and encrypt Minecraft Bedrock server resource packs.
 
 ## How It Works
 
@@ -143,6 +143,37 @@ bedrock-pack-tools decrypt ./packs/SomePack_v1.0.0 ABCDEFGHIJKLMNOPQRSTUVWXYZ123
 bedrock-pack-tools decrypt --all server_keys.json ./packs/
 bedrock-pack-tools decrypt --all server_keys.json ./packs/ ./decrypted/
 ```
+
+### `encrypt` — Encrypt Resource Packs
+
+```bash
+bedrock-pack-tools encrypt <pack-dir> [key] [output.mcpack]
+```
+
+Encrypts a plain resource pack directory and produces a ready-to-use `.mcpack` file
+plus a `.mcpack.key` file beside it. Uses AES-256-CFB8 (the standard Bedrock encryption
+format). Each file gets its own randomly generated 32-character key.
+
+`manifest.json` and `pack_icon.png` are copied as-is (listed in `contents.json`
+with an empty key, as Bedrock expects).
+
+If no key is provided, a random 32-character alphanumeric key is generated.
+If no output path is provided, the `.mcpack` is named after the pack directory.
+
+**Examples:**
+
+```bash
+# Encrypt with an auto-generated key → MyPack_v1.0.0.mcpack + MyPack_v1.0.0.mcpack.key
+bedrock-pack-tools encrypt ./MyPack_v1.0.0/
+
+# Encrypt with a specific master key
+bedrock-pack-tools encrypt ./MyPack_v1.0.0/ ABCDEFGHIJKLMNOPQRSTUVWXYZ123456
+
+# Encrypt to a specific path
+bedrock-pack-tools encrypt ./MyPack_v1.0.0/ ABCDEFGHIJKLMNOPQRSTUVWXYZ123456 ./out/MyPack.mcpack
+```
+
+To deploy: copy the `.mcpack` and `.mcpack.key` to your Bedrock server's `resource_packs/` directory.
 
 ## Keys JSON Format
 

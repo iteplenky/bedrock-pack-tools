@@ -5,12 +5,55 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 )
+
+// zipDir creates a zip archive at dstPath from all files in srcDir.
+func zipDir(srcDir, dstPath string) (retErr error) {
+	f, err := os.Create(dstPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); retErr == nil {
+			retErr = cerr
+		}
+	}()
+
+	w := zip.NewWriter(f)
+	defer func() {
+		if cerr := w.Close(); retErr == nil {
+			retErr = cerr
+		}
+	}()
+
+	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, relErr := filepath.Rel(srcDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fw, err := w.Create(rel)
+		if err != nil {
+			return err
+		}
+		_, err = fw.Write(data)
+		return err
+	})
+}
 
 // extractResourcePack reads a gophertunnel resource.Pack into a zip archive
 // and extracts it to outDir.

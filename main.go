@@ -25,6 +25,8 @@ func main() {
 		err = runDownload(os.Args[2:])
 	case "decrypt":
 		err = runDecrypt(os.Args[2:])
+	case "encrypt":
+		err = runEncrypt(os.Args[2:])
 	case "version", "-v", "--version":
 		printVersion()
 	case "help", "-h", "--help":
@@ -54,13 +56,14 @@ func printVersion() {
 }
 
 func printUsage() {
-	fmt.Println(`bedrock-pack-tools — dump, download & decrypt Minecraft Bedrock resource packs
+	fmt.Println(`bedrock-pack-tools — dump, download, decrypt & encrypt Minecraft Bedrock resource packs
 
 Usage:
   bedrock-pack-tools keys     <server:port> [output.json]
   bedrock-pack-tools download <server:port> [output-dir]
   bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
   bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
+  bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
   bedrock-pack-tools version
 
 Commands:
@@ -73,6 +76,10 @@ Commands:
 
   decrypt   Decrypt an encrypted resource pack using a 32-character AES key,
             or batch-decrypt all packs matched by a keys.json file.
+
+  encrypt   Encrypt a plain resource pack into a ready-to-use .mcpack file
+            with a .mcpack.key beside it. Uses AES-256-CFB8 with per-file keys.
+            If no key is provided, one is generated automatically.
 
   version   Show version information.
 

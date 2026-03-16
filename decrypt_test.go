@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-var testKey = []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
-
 func TestDecryptContentsJSON(t *testing.T) {
 	contents := contentsFile{
 		Content: []contentsEntry{
@@ -18,12 +16,12 @@ func TestDecryptContentsJSON(t *testing.T) {
 	}
 	payload, _ := json.Marshal(contents)
 
-	ciphertext := encryptAES256CFB8(payload, testKey)
+	ciphertext := mustEncrypt(t, payload, []byte(testMasterKey))
 
 	header := make([]byte, contentsHeaderSize)
 	data := append(header, ciphertext...)
 
-	result, err := decryptContentsJSON(data, string(testKey))
+	result, err := decryptContentsJSON(data, testMasterKey)
 	if err != nil {
 		t.Fatalf("decryptContentsJSON error: %v", err)
 	}
@@ -39,18 +37,18 @@ func TestDecryptContentsJSON(t *testing.T) {
 }
 
 func TestDecryptContentsJSON_TooSmall(t *testing.T) {
-	_, err := decryptContentsJSON(make([]byte, 100), string(testKey))
+	_, err := decryptContentsJSON(make([]byte, 100), testMasterKey)
 	if err == nil {
 		t.Error("expected error for data smaller than 256 bytes")
 	}
 }
 
 func TestDecryptContentsJSON_InvalidJSON(t *testing.T) {
-	garbage := encryptAES256CFB8([]byte("not json {{{"), testKey)
+	garbage := mustEncrypt(t, []byte("not json {{{"), []byte(testMasterKey))
 	header := make([]byte, contentsHeaderSize)
 	data := append(header, garbage...)
 
-	_, err := decryptContentsJSON(data, string(testKey))
+	_, err := decryptContentsJSON(data, testMasterKey)
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -61,11 +59,11 @@ func TestDecryptContentsJSON_TrailingNulls(t *testing.T) {
 	payload, _ := json.Marshal(contents)
 	payload = append(payload, 0, 0, 0, '\n', ' ')
 
-	ciphertext := encryptAES256CFB8(payload, testKey)
+	ciphertext := mustEncrypt(t, payload, []byte(testMasterKey))
 	header := make([]byte, contentsHeaderSize)
 	data := append(header, ciphertext...)
 
-	result, err := decryptContentsJSON(data, string(testKey))
+	result, err := decryptContentsJSON(data, testMasterKey)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,7 +104,7 @@ func TestProcessFile_DecryptEncrypted(t *testing.T) {
 
 	fileKey := "ZYXWVUTSRQPONMLKJIHGFEDCBA654321"
 	plaintext := []byte(`{"type":"texture","data":"abc"}`)
-	ciphertext := encryptAES256CFB8(plaintext, []byte(fileKey))
+	ciphertext := mustEncrypt(t, plaintext, []byte(fileKey))
 	os.WriteFile(filepath.Join(srcDir, "data.json"), ciphertext, 0644)
 
 	entry := contentsEntry{Path: "data.json", Key: fileKey}

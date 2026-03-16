@@ -1,33 +1,25 @@
 package main
 
 import (
-	"crypto/aes"
 	"testing"
 )
 
-func encryptAES256CFB8(data, key []byte) []byte {
-	block, _ := aes.NewCipher(key)
-	iv := key[:aes.BlockSize]
+const testMasterKey = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
 
-	out := make([]byte, len(data))
-	prev := make([]byte, aes.BlockSize)
-	copy(prev, iv)
-	encBlock := make([]byte, aes.BlockSize)
-
-	for i := range data {
-		block.Encrypt(encBlock, prev)
-		out[i] = data[i] ^ encBlock[0]
-		copy(prev[:aes.BlockSize-1], prev[1:])
-		prev[aes.BlockSize-1] = out[i]
+func mustEncrypt(t testing.TB, data, key []byte) []byte {
+	t.Helper()
+	ct, err := encryptAES256CFB8(data, key)
+	if err != nil {
+		t.Fatalf("encrypt error: %v", err)
 	}
-	return out
+	return ct
 }
 
 func TestDecryptAES256CFB8_RoundTrip(t *testing.T) {
-	key := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+	key := []byte(testMasterKey)
 	plaintext := []byte("Hello, Bedrock resource packs!")
 
-	ciphertext := encryptAES256CFB8(plaintext, key)
+	ciphertext := mustEncrypt(t, plaintext, key)
 	decrypted, err := decryptAES256CFB8(ciphertext, key)
 	if err != nil {
 		t.Fatalf("decrypt error: %v", err)
@@ -38,7 +30,7 @@ func TestDecryptAES256CFB8_RoundTrip(t *testing.T) {
 }
 
 func TestDecryptAES256CFB8_EmptyData(t *testing.T) {
-	key := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+	key := []byte(testMasterKey)
 	decrypted, err := decryptAES256CFB8([]byte{}, key)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -49,10 +41,10 @@ func TestDecryptAES256CFB8_EmptyData(t *testing.T) {
 }
 
 func TestDecryptAES256CFB8_SingleByte(t *testing.T) {
-	key := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+	key := []byte(testMasterKey)
 	plaintext := []byte{0x42}
 
-	ciphertext := encryptAES256CFB8(plaintext, key)
+	ciphertext := mustEncrypt(t, plaintext, key)
 	decrypted, err := decryptAES256CFB8(ciphertext, key)
 	if err != nil {
 		t.Fatalf("decrypt error: %v", err)
@@ -63,13 +55,13 @@ func TestDecryptAES256CFB8_SingleByte(t *testing.T) {
 }
 
 func TestDecryptAES256CFB8_LargeData(t *testing.T) {
-	key := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+	key := []byte(testMasterKey)
 	plaintext := make([]byte, 64*1024)
 	for i := range plaintext {
 		plaintext[i] = byte(i % 256)
 	}
 
-	ciphertext := encryptAES256CFB8(plaintext, key)
+	ciphertext := mustEncrypt(t, plaintext, key)
 	decrypted, err := decryptAES256CFB8(ciphertext, key)
 	if err != nil {
 		t.Fatalf("decrypt error: %v", err)
@@ -101,13 +93,20 @@ func TestDecryptAES256CFB8_InvalidKeyLength(t *testing.T) {
 	}
 }
 
+func TestEncryptAES256CFB8_InvalidKeyLength(t *testing.T) {
+	_, err := encryptAES256CFB8([]byte("test"), []byte("short"))
+	if err == nil {
+		t.Error("expected error for invalid key length")
+	}
+}
+
 func TestDecryptAES256CFB8_DifferentKeysProduceDifferentOutput(t *testing.T) {
-	key1 := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+	key1 := []byte(testMasterKey)
 	key2 := []byte("ZYXWVUTSRQPONMLKJIHGFEDCBA654321")
 	plaintext := []byte("same input data for both keys!!")
 
-	ct1 := encryptAES256CFB8(plaintext, key1)
-	ct2 := encryptAES256CFB8(plaintext, key2)
+	ct1 := mustEncrypt(t, plaintext, key1)
+	ct2 := mustEncrypt(t, plaintext, key2)
 
 	if string(ct1) == string(ct2) {
 		t.Error("different keys should produce different ciphertext")
@@ -115,9 +114,9 @@ func TestDecryptAES256CFB8_DifferentKeysProduceDifferentOutput(t *testing.T) {
 }
 
 func BenchmarkDecryptAES256CFB8(b *testing.B) {
-	key := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+	key := []byte(testMasterKey)
 	data := make([]byte, 256*1024)
-	ciphertext := encryptAES256CFB8(data, key)
+	ciphertext, _ := encryptAES256CFB8(data, key)
 
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()

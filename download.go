@@ -117,19 +117,19 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 
 	resp, err := d.httpClient.Get(tp.DownloadURL)
 	if err != nil {
-		fmt.Printf("  %s[ERR]%s CDN download failed: %v\n", colorRed, colorReset, err)
+		fmt.Fprintf(os.Stderr, "  %s[ERR]%s CDN download failed: %v\n", colorRed, colorReset, err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("  %s[ERR]%s CDN returned HTTP %d\n", colorRed, colorReset, resp.StatusCode)
+		fmt.Fprintf(os.Stderr, "  %s[ERR]%s CDN returned HTTP %d\n", colorRed, colorReset, resp.StatusCode)
 		return
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("  %s[ERR]%s CDN read failed: %v\n", colorRed, colorReset, err)
+		fmt.Fprintf(os.Stderr, "  %s[ERR]%s CDN read failed: %v\n", colorRed, colorReset, err)
 		return
 	}
 
@@ -147,7 +147,7 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 	if err == nil {
 		n, extractErr := extractZip(zr, packDir)
 		if extractErr != nil {
-			fmt.Printf("  %s[ERR]%s Extract failed: %v\n", colorRed, colorReset, extractErr)
+			fmt.Fprintf(os.Stderr, "  %s[ERR]%s Extract failed: %v\n", colorRed, colorReset, extractErr)
 		} else {
 			fmt.Printf("  %s[OK]%s  %-50s (%d files)\n", colorCyan, colorReset, dirName, n)
 		}
@@ -156,7 +156,7 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 
 	outFile := filepath.Join(d.outDir, dirName+mcpackExt)
 	if err := os.WriteFile(outFile, data, 0644); err != nil {
-		fmt.Printf("  %s[ERR]%s Save failed: %v\n", colorRed, colorReset, err)
+		fmt.Fprintf(os.Stderr, "  %s[ERR]%s Save failed: %v\n", colorRed, colorReset, err)
 	} else {
 		fmt.Printf("  %s[OK]%s  Saved as %s (%.1f KB)\n", colorCyan, colorReset, outFile, float64(len(data))/1024)
 	}
@@ -263,8 +263,13 @@ Examples:
 	defer conn.Close()
 
 	packs := conn.ResourcePacks()
+
+	tracker.mu.Lock()
+	totalReceived := tracker.received
+	tracker.mu.Unlock()
+
 	fmt.Printf("  Downloaded %d packs (%.1f MB) in %.1fs\n\n",
-		len(packs), float64(tracker.received)/1024/1024, elapsed.Seconds())
+		len(packs), float64(totalReceived)/1024/1024, elapsed.Seconds())
 
 	fmt.Println("  Extracting...")
 
