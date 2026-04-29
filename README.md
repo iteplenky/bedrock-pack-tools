@@ -1,5 +1,10 @@
 # Bedrock Pack Tools
 
+[![Release](https://img.shields.io/github/v/release/iteplenky/bedrock-pack-tools?logo=github&sort=semver)](https://github.com/iteplenky/bedrock-pack-tools/releases/latest)
+[![Test](https://github.com/iteplenky/bedrock-pack-tools/actions/workflows/test.yml/badge.svg)](https://github.com/iteplenky/bedrock-pack-tools/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/iteplenky/bedrock-pack-tools.svg)](https://pkg.go.dev/github.com/iteplenky/bedrock-pack-tools)
+[![License: MIT](https://img.shields.io/github/license/iteplenky/bedrock-pack-tools)](LICENSE)
+
 Dump encryption keys, download, decrypt and encrypt Minecraft Bedrock server resource packs.
 
 ## How It Works
