@@ -1,4 +1,4 @@
-module github.com/iteplenky/bedrock-pack-tools
+module github.com/iteplenky/bedrock-pack-tools/v3
 
 go 1.25.0
 
