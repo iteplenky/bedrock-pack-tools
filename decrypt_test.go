@@ -148,6 +148,32 @@ func TestProcessFile_ManifestCopiedPlain(t *testing.T) {
 	}
 }
 
+func TestProcessFile_DirectoryMarker(t *testing.T) {
+	tmp := t.TempDir()
+	srcDir := filepath.Join(tmp, "src")
+	dstDir := filepath.Join(tmp, "dst")
+	os.MkdirAll(filepath.Join(srcDir, "items"), 0755)
+	os.WriteFile(filepath.Join(srcDir, "items", "child.json"), []byte("{}"), 0644)
+
+	entry := contentsEntry{Path: "items", Key: ""}
+
+	decrypted, err := processFile(entry, filepath.Join(srcDir, "items"), filepath.Join(dstDir, "items"))
+	if err != nil {
+		t.Fatalf("processFile should treat directory marker as no-op, got error: %v", err)
+	}
+	if decrypted {
+		t.Error("directory marker should not be reported as decrypted")
+	}
+
+	info, err := os.Stat(filepath.Join(dstDir, "items"))
+	if err != nil {
+		t.Fatalf("expected dst directory to be created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("dst path should be a directory")
+	}
+}
+
 func TestCopyPackIcon(t *testing.T) {
 	tmp := t.TempDir()
 	srcDir := filepath.Join(tmp, "src")

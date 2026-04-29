@@ -293,6 +293,16 @@ func processFile(entry contentsEntry, srcPath, dstPath string) (decrypted bool, 
 		return false, err
 	}
 
+	info, err := os.Stat(srcPath)
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		// contents.json may list bare directory paths as marker entries
+		// (path with empty key, no file body). Mirror the directory and move on.
+		return false, os.MkdirAll(dstPath, 0755)
+	}
+
 	raw, err := os.ReadFile(srcPath)
 	if err != nil {
 		return false, err
