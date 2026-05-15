@@ -56,18 +56,19 @@ func newKeyStore(file string) *keyStore {
 }
 
 // merge adds collected keys and persists the updated set to disk.
+// The disk write happens under the mutex so two concurrent merges can't
+// race and have the older snapshot overwrite the newer one — saveKeys
+// is a small json.Marshal + WriteFile (milliseconds), so blocking other
+// merges for that window is fine and merges are infrequent anyway.
 func (ks *keyStore) merge(collected map[string]keyEntry) {
 	ks.mu.Lock()
-	for uid, entry := range collected {
-		ks.keys[uid] = entry
+	defer ks.mu.Unlock()
+	maps.Copy(ks.keys, collected)
+	if len(ks.keys) == 0 {
+		return
 	}
-	snapshot := maps.Clone(ks.keys)
-	ks.mu.Unlock()
-
-	if len(snapshot) > 0 {
-		if err := saveKeys(snapshot, ks.file); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not save keys: %v\n", err)
-		}
+	if err := saveKeys(ks.keys, ks.file); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not save keys: %v\n", err)
 	}
 }
 
@@ -162,10 +163,29 @@ func readPackUUID(packDir string) (string, error) {
 	return manifest.Header.UUID, nil
 }
 
+// readPackName returns the pack's human-readable name from manifest.json,
+// or "" if the manifest is missing, unparseable, or has no name. Used to
+// rename CDN-downloaded pack directories that initially used the UUID.
+func readPackName(packDir string) string {
+	data, err := os.ReadFile(filepath.Join(packDir, manifestJSON))
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Header struct {
+			Name string `json:"name"`
+		} `json:"header"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return ""
+	}
+	return manifest.Header.Name
+}
+
 func saveKeys(keys map[string]keyEntry, path string) error {
 	data, err := json.MarshalIndent(keys, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }

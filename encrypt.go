@@ -84,7 +84,7 @@ Examples:
 	if err := zipDir(tmpDir, mcpackPath); err != nil {
 		return fmt.Errorf("create mcpack: %w", err)
 	}
-	if err := os.WriteFile(keyPath, []byte(masterKey), 0644); err != nil {
+	if err := os.WriteFile(keyPath, []byte(masterKey), 0600); err != nil {
 		return fmt.Errorf("write key file: %w", err)
 	}
 

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"os/signal"
 	"slices"
 	"sync"
 	"time"
@@ -24,8 +25,8 @@ type keysTracker struct {
 
 func (p *keysTracker) onPackStart(id uuid.UUID, version string, current, total int) bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.totalPacks = total
+	p.mu.Unlock()
 	fmt.Printf("%s  Pack %d/%d: %s v%s (skipped)", clearLine, current+1, total, id, version)
 	return false
 }
@@ -40,6 +41,11 @@ func (p *keysTracker) onResourcePacksInfo(payload []byte) {
 	packs, err := parseResourcePacks(payload)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+		// Cancel anyway — ResourcePacksInfo arrives once per connection,
+		// so a parse failure means we have nothing to wait for.
+		if p.cancel != nil {
+			p.cancel()
+		}
 		return
 	}
 
@@ -83,7 +89,9 @@ Examples:
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stopSignal()
+	ctx, cancel := context.WithTimeout(sigCtx, 120*time.Second)
 	defer cancel()
 
 	tracker := &keysTracker{

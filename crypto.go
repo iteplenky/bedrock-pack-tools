@@ -33,8 +33,10 @@ func decryptAES256CFB8(data []byte, key []byte) ([]byte, error) {
 }
 
 // encryptAES256CFB8 encrypts data with AES-256 in CFB8 mode.
-// The only difference from decrypt: the feedback register shifts in
-// the ciphertext byte (out[i]) instead of the input byte (data[i]).
+// Both functions shift the *ciphertext* byte into the feedback register;
+// the only difference is that during encryption that byte is the
+// freshly-produced out[i], while during decryption it is the input data[i]
+// (which is already ciphertext).
 func encryptAES256CFB8(data []byte, key []byte) ([]byte, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("key must be 32 bytes, got %d", len(key))

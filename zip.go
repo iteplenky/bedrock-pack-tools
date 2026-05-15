@@ -42,16 +42,21 @@ func zipDir(srcDir, dstPath string) (retErr error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		src, openErr := os.Open(path)
+		if openErr != nil {
+			return openErr
 		}
-		fw, err := w.Create(rel)
-		if err != nil {
-			return err
+		fw, createErr := w.Create(rel)
+		if createErr != nil {
+			src.Close()
+			return createErr
 		}
-		_, err = fw.Write(data)
-		return err
+		_, copyErr := io.Copy(fw, src)
+		closeErr := src.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
 	})
 }
 
@@ -83,6 +88,7 @@ func extractZip(zr *zip.Reader, outDir string) (int, error) {
 	for _, f := range zr.File {
 		fpath := filepath.Join(outDir, f.Name)
 		if !strings.HasPrefix(filepath.Clean(fpath), cleanBase) {
+			fmt.Fprintf(os.Stderr, "  %s[WARN]%s zip-slip path skipped: %s\n", colorYellow, colorReset, f.Name)
 			continue
 		}
 

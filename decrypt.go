@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -64,7 +65,7 @@ Batch-decrypt all packs matched by a keys.json file:
 		fmt.Println("Usage: bedrock-pack-tools decrypt <pack-dir> <key> [output-dir]")
 		return errUsage
 	}
-	outDir := args[0] + "_decrypted"
+	outDir := strings.TrimRight(args[0], "/\\") + "_decrypted"
 	if len(args) > 2 {
 		outDir = args[2]
 	}
@@ -89,7 +90,9 @@ func decryptAll(keysFile, cacheDir, outBase string) error {
 	}
 
 	if outBase == "" {
-		outBase = filepath.Join(cacheDir, "decrypted")
+		// Sibling dir, not a child — avoids colliding with a real pack
+		// named "decrypted" inside cacheDir.
+		outBase = strings.TrimRight(cacheDir, "/\\") + "_decrypted"
 	}
 
 	entries, err := os.ReadDir(cacheDir)
@@ -170,6 +173,9 @@ func decryptAll(keysFile, cacheDir, outBase string) error {
 
 	wg.Wait()
 	fmt.Printf("\n  Decrypted %d/%d packs -> %s\n", succeeded, len(jobs), outBase)
+	if succeeded == 0 {
+		return fmt.Errorf("all %d packs failed to decrypt", len(jobs))
+	}
 	return nil
 }
 
