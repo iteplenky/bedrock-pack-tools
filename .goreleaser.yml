@@ -23,6 +23,12 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+release:
+  # Re-running the release for an existing tag (e.g. after a tag
+  # force-push) would otherwise fail with 422 already_exists on every
+  # asset upload. Delete-then-upload instead.
+  replace_existing_artifacts: true
+
 changelog:
   sort: asc
   filters:
