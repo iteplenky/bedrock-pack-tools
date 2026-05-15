@@ -1,3 +1,25 @@
+// Command bedrock-pack-tools dumps, downloads, decrypts, and encrypts
+// Minecraft Bedrock Edition resource packs from servers.
+//
+// Bedrock servers send AES-256-CFB8 encrypted resource packs whose
+// per-pack master keys arrive over the wire during the connection
+// handshake. bedrock-pack-tools connects as a Bedrock client (Xbox
+// Live device-code auth, token cached locally), captures those keys,
+// optionally downloads the packs (handles both the protocol transfer
+// and the CDN-URL fallback), and decrypts them offline. It can also
+// encrypt a plain resource-pack directory back into a deployable
+// .mcpack + .mcpack.key pair.
+//
+// Usage:
+//
+//	bedrock-pack-tools keys     <server:port> [output.json]
+//	bedrock-pack-tools download <server:port> [output-dir]
+//	bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
+//	bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
+//	bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
+//
+// See the README for the full command reference, the on-disk format
+// of contents.json, and the keys.json schema produced by 'keys'.
 package main
 
 import (
