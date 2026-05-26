@@ -3,8 +3,24 @@ name: Test
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/release.yml"
+      - ".gitignore"
+      - ".goreleaser.yml"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/release.yml"
+      - ".gitignore"
+      - ".goreleaser.yml"
 
 jobs:
   test:
