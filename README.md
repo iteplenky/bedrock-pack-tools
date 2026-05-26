@@ -186,6 +186,47 @@ bedrock-pack-tools encrypt ./MyPack_v1.0.0/ ABCDEFGHIJKLMNOPQRSTUVWXYZ123456 ./o
 
 To deploy: copy the `.mcpack` and `.mcpack.key` to your Bedrock server's `resource_packs/` directory.
 
+### `featured` — Browse Featured Servers
+
+```bash
+bedrock-pack-tools featured
+bedrock-pack-tools featured download <index> [output-dir]
+```
+
+Lists the Featured Servers (and any active Live Events) returned by Minecraft's
+client-discovery API, with a live RakNet ping for each entry, then optionally
+downloads a chosen entry's resource packs.
+
+This uses the same catalog the official Bedrock client reads on its Servers tab,
+so the address list is always current — partner hostnames change and new partners
+appear without the tool needing an update.
+
+**Authentication:** Reuses the cached Xbox token. On first run, an MCToken is
+minted via PlayFab and cached in `.mctoken.json` alongside `.xbox_token.json`
+for ~4 hours. No additional sign-in step.
+
+**Row tags:**
+
+- `[ON]`  - partner with a public `host:port`, currently online (RakNet ping succeeded)
+- `[OFF]` - partner with a public `host:port`, currently offline (ping failed)
+- `[EXP]` - partner the in-game client reaches via `experienceId`, not a fixed host. Address is resolved on download through `POST /api/v2.0/join/experience`; the tool prints a clear message if the experience has no active venue at that moment.
+- `[EVT]` - live event (Mojang Gathering, e.g. anniversaries or Mob Vote). Resolved on download via `/api/v1.0/access` + `/api/v1.0/venue/{gatheringId}`. Only appears while an event is active in your account's catalog cohort; many cohorts see none for long stretches.
+
+**Catalog cohort:** Mojang shards the Featured catalog by a PlayFab Experiments cohort keyed on `device.id`. The tool persists a stable ID at `.device_id` next to the token caches so your list stays consistent across runs. If your in-game client shows different rows than the tool, you're in different cohorts - that's by design on Mojang's side, not a bug. To roll a new cohort, delete `.device_id` and run `featured` again.
+
+**Examples:**
+
+```bash
+# List everything in the catalog with online/offline status
+bedrock-pack-tools featured
+
+# Download the first entry to ./packs/
+bedrock-pack-tools featured download 1
+
+# Download entry 3 to a specific directory
+bedrock-pack-tools featured download 3 ./my_packs/
+```
+
 ## Keys JSON Format
 
 The `keys` command outputs JSON mapping pack UUIDs to their encryption info:

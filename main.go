@@ -17,6 +17,7 @@
 //	bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
 //	bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
 //	bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
+//	bedrock-pack-tools featured [download <index> [output-dir]]
 //
 // See the README for the full command reference, the on-disk format
 // of contents.json, and the keys.json schema produced by 'keys'.
@@ -49,6 +50,8 @@ func main() {
 		err = runDecrypt(os.Args[2:])
 	case "encrypt":
 		err = runEncrypt(os.Args[2:])
+	case "featured":
+		err = runFeatured(os.Args[2:])
 	case "version", "-v", "--version":
 		printVersion()
 	case "help", "-h", "--help":
@@ -86,6 +89,7 @@ Usage:
   bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
   bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
   bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
+  bedrock-pack-tools featured [download <index> [output-dir]]
   bedrock-pack-tools version
 
 Commands:
@@ -102,6 +106,9 @@ Commands:
   encrypt   Encrypt a plain resource pack into a ready-to-use .mcpack file
             with a .mcpack.key beside it. Uses AES-256-CFB8 with per-file keys.
             If no key is provided, one is generated automatically.
+
+  featured  List the Featured Servers and Live Events from Minecraft's
+            client-discovery API and optionally download one by index.
 
   version   Show version information.
 
