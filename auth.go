@@ -56,8 +56,8 @@ func getTokenSource() (oauth2.TokenSource, error) {
 		return auth.RefreshTokenSource(t), nil
 	}
 
-	fmt.Println("  Auth: no cached token — starting Xbox Live device auth")
-	fmt.Println("  A URL and code will appear — enter it in your browser.")
+	fmt.Println("  Auth: no cached token - starting Xbox Live device auth")
+	fmt.Println("  A URL and code will appear - enter it in your browser.")
 	fmt.Println()
 
 	tok, err := auth.TokenSource.Token()

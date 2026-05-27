@@ -113,13 +113,13 @@ func decryptAll(keysFile, cacheDir, outBase string) error {
 
 		packUUID, err := readPackUUID(packDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  %s[WARN]%s %s — %v\n", colorYellow, colorReset, entry.Name(), err)
+			fmt.Fprintf(os.Stderr, "  %s[WARN]%s %s - %v\n", colorYellow, colorReset, entry.Name(), err)
 			continue
 		}
 
 		keyInfo, ok := keys[packUUID]
 		if !ok {
-			fmt.Printf("  %s[SKIP]%s %s — no key for UUID %s\n",
+			fmt.Printf("  %s[SKIP]%s %s - no key for UUID %s\n",
 				colorYellow, colorReset, entry.Name(), packUUID)
 			continue
 		}
