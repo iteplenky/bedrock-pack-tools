@@ -333,6 +333,9 @@ Flags:
 The output directory will contain one folder per pack: Name_vVersion/
 A keys file (server_keys.json) is also saved alongside.
 
+The downloaded packs are still encrypted. To get editable directories,
+run: bedrock-pack-tools decrypt --all <keys.json> <output-dir>
+
 Examples:
   bedrock-pack-tools download <server:port>
   bedrock-pack-tools download <server:port> ./packs/`)
@@ -401,6 +404,7 @@ Examples:
 			fmt.Printf("\n  Connection closed after %.1fs, but %d packs downloaded via CDN\n", elapsed.Seconds(), cdnCount)
 			if keyCount > 0 {
 				fmt.Printf("  Keys: %d -> %s\n", keyCount, keysFile)
+				fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 			}
 			fmt.Println()
 			return nil
@@ -474,6 +478,7 @@ Examples:
 			fmt.Fprintf(os.Stderr, "  Warning: could not save keys: %v\n", err)
 		}
 		fmt.Printf("  Keys: %d -> %s\n", len(keys), keysFile)
+		fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 	}
 	fmt.Println()
 	return nil
