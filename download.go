@@ -60,6 +60,12 @@ type downloadTracker struct {
 	outDir        string
 	verbose       bool
 	httpClient    *http.Client
+
+	// connectSpinner runs from runDownload's "Connecting to X" phase
+	// until the first gophertunnel callback fires (Authenticated or
+	// onPackStart). Stop is idempotent so the safety stop after
+	// DialContext returns is harmless if a callback already stopped it.
+	connectSpinner *spinner
 }
 
 func (d *downloadTracker) onPackStart(id uuid.UUID, version string, current, total int) bool {
@@ -71,6 +77,9 @@ func (d *downloadTracker) onPackStart(id uuid.UUID, version string, current, tot
 	}
 	d.mu.Unlock()
 	if firstPack {
+		if d.connectSpinner != nil {
+			d.connectSpinner.stop("")
+		}
 		fmt.Printf("  Connected! %d packs, downloading...\n", total)
 	}
 	return true
@@ -94,6 +103,9 @@ func (d *downloadTracker) onPacket(header packet.Header, payload []byte, src, ds
 		}
 		d.mu.Unlock()
 		if announce {
+			if d.connectSpinner != nil {
+				d.connectSpinner.stop("")
+			}
 			fmt.Println("  Authenticated, loading packs...")
 		}
 	case packet.IDResourcePacksInfo:
@@ -388,11 +400,12 @@ Examples:
 	}
 
 	fmt.Println()
-	fmt.Println("  Connecting to " + server + " ...")
+	tracker.connectSpinner = startSpinner("Connecting to " + server)
 	start := time.Now()
 
 	conn, err := dialer.DialContext(ctx, "raknet", server)
 	elapsed := time.Since(start)
+	tracker.connectSpinner.stop("")
 
 	if err != nil {
 		tracker.cdnWg.Wait()

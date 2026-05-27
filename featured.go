@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sandertv/go-raknet"
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -75,18 +76,29 @@ func featuredList() error {
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
 
-	servers, _, err := fetchFeaturedListWithClient(sigCtx)
+	// Auth output must happen BEFORE the spinner starts, otherwise its
+	// fmt.Println splices into the spinner's redrawn line and leaves a
+	// frozen "spinner + Auth: ..." string on screen.
+	tokenSource, err := getTokenSource()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	sp := startSpinner("Fetching catalog")
+	servers, _, err := fetchFeaturedListWithClient(sigCtx, tokenSource)
+	sp.stop("")
 	if err != nil {
 		return err
 	}
 	if len(servers) == 0 {
-		fmt.Println("\n  No featured servers returned by the API.")
+		fmt.Println("  No featured servers returned by the API.")
 		return nil
 	}
 
-	fmt.Printf("\n  Pinging %d servers...", len(servers))
+	sp = startSpinner(fmt.Sprintf("Pinging %d servers", len(servers)))
 	pingAll(sigCtx, servers)
-	fmt.Print(clearLine)
+	sp.stop("")
 
 	printFeaturedTable(servers)
 	fmt.Println("\n  To download:  bedrock-pack-tools featured download <index> [output-dir]")
@@ -107,7 +119,15 @@ func featuredDownload(args []string) error {
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
 
-	servers, client, err := fetchFeaturedListWithClient(sigCtx)
+	tokenSource, err := getTokenSource()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	sp := startSpinner("Fetching catalog")
+	servers, client, err := fetchFeaturedListWithClient(sigCtx, tokenSource)
+	sp.stop("")
 	if err != nil {
 		return err
 	}
@@ -173,12 +193,7 @@ func resolveAddress(ctx context.Context, client *gatheringsClient, s featuredSer
 // instead of re-authenticating. Retries once after a server-side token
 // rejection so a server-revoked but time-valid cached MCToken doesn't
 // strand the user.
-func fetchFeaturedListWithClient(parent context.Context) ([]featuredServer, *gatheringsClient, error) {
-	tokenSource, err := getTokenSource()
-	if err != nil {
-		return nil, nil, err
-	}
-
+func fetchFeaturedListWithClient(parent context.Context, tokenSource oauth2.TokenSource) ([]featuredServer, *gatheringsClient, error) {
 	ctx, cancel := context.WithTimeout(parent, featuredAPITimeout)
 	defer cancel()
 

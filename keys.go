@@ -21,12 +21,17 @@ type keysTracker struct {
 	totalPacks int
 	keys       *keyStore
 	cancel     context.CancelFunc
+
+	connectSpinner *spinner
 }
 
 func (p *keysTracker) onPackStart(id uuid.UUID, version string, current, total int) bool {
 	p.mu.Lock()
 	p.totalPacks = total
 	p.mu.Unlock()
+	if p.connectSpinner != nil {
+		p.connectSpinner.stop("")
+	}
 	fmt.Printf("%s  Pack %d/%d: %s v%s (skipped)", clearLine, current+1, total, id, version)
 	return false
 }
@@ -106,11 +111,12 @@ Examples:
 	}
 
 	fmt.Println()
-	fmt.Println("  Connecting to " + server + " ...")
+	tracker.connectSpinner = startSpinner("Connecting to " + server)
 	start := time.Now()
 
 	conn, err := dialer.DialContext(ctx, "raknet", server)
 	elapsed := time.Since(start)
+	tracker.connectSpinner.stop("")
 
 	keys := tracker.keys.snapshot()
 	keyCount := len(keys)
