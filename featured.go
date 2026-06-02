@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
 	"github.com/sandertv/go-raknet"
 	"golang.org/x/oauth2"
 )
@@ -18,10 +19,7 @@ import (
 const (
 	featuredPingConcurrency = 5
 	featuredPingTimeout     = 3 * time.Second
-	// featuredAPITimeout has to cover Discover + a cold PlayFab mint +
-	// the gatherings POST. A fresh PlayFab login alone can use 10-15s
-	// when the on-disk MCToken cache is empty; 60s keeps the slow path
-	// comfortable without burying real network failures.
+	// 60s covers Discover + cold PlayFab mint (10-15s alone) + gatherings POST.
 	featuredAPITimeout = 60 * time.Second
 )
 
@@ -76,9 +74,8 @@ func featuredList() error {
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
 
-	// Auth output must happen BEFORE the spinner starts, otherwise its
-	// fmt.Println splices into the spinner's redrawn line and leaves a
-	// frozen "spinner + Auth: ..." string on screen.
+	// Auth prints must precede the spinner - their fmt.Println would
+	// otherwise splice into the spinner's redrawn line.
 	tokenSource, err := getTokenSource()
 	if err != nil {
 		return err
@@ -151,31 +148,23 @@ func featuredDownload(args []string) error {
 	return runDownload(downloadArgs)
 }
 
-// resolveAddress turns a [featuredServer] into a connectable host:port.
-// Partner-direct entries return their inline address; experience and
-// gathering entries trigger the appropriate franchise-service call to
-// pick up the current venue, with helpful errors when nothing is live.
-// The client is the one already constructed by fetchFeaturedList, so we
-// reuse the cached MCToken instead of running auth twice.
-func resolveAddress(ctx context.Context, client *gatheringsClient, s featuredServer) (string, error) {
+// resolveAddress turns a Server into a host:port. Partner-direct
+// entries return inline; experience/gathering rows go through the
+// franchise API.
+func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.Server) (string, error) {
 	switch s.Kind {
-	case kindPartnerDirect:
+	case franchise.KindPartnerDirect:
 		return s.Address(), nil
-	case kindGathering, kindPartnerExperience:
-		tok, err := client.Token(ctx)
+	case franchise.KindGathering:
+		host, port, err := client.Venue(ctx, s.GatheringID)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("resolve gathering %q: %w", s.Name, err)
 		}
-		if s.Kind == kindGathering {
-			host, port, err := venueAddress(ctx, client.gatheringsURI, tok.AuthorizationHeader, s.GatheringID)
-			if err != nil {
-				return "", fmt.Errorf("resolve gathering %q: %w", s.Name, err)
-			}
-			return fmt.Sprintf("%s:%d", host, port), nil
-		}
-		host, port, err := joinExperience(ctx, client.gatheringsURI, tok.AuthorizationHeader, s.ExperienceID)
+		return fmt.Sprintf("%s:%d", host, port), nil
+	case franchise.KindPartnerExperience:
+		host, port, err := client.JoinExperience(ctx, s.ExperienceID)
 		if err != nil {
-			if errors.Is(err, errExperienceOffline) {
+			if errors.Is(err, franchise.ErrExperienceOffline) {
 				return "", fmt.Errorf("%q has no active venue right now (the slot is listed but not joinable from outside the official client)", s.Name)
 			}
 			return "", fmt.Errorf("resolve experience %q: %w", s.Name, err)
@@ -185,59 +174,50 @@ func resolveAddress(ctx context.Context, client *gatheringsClient, s featuredSer
 	return "", fmt.Errorf("unknown featured kind for %q", s.Name)
 }
 
-// fetchFeaturedListWithClient authenticates and pulls both the partner
-// catalog (POST /discovery/blob/client) and the live-events list
-// (GET /config/public), merging gatherings to the top - that's the
-// order the in-game Servers tab uses. Returns the [gatheringsClient]
-// too so a follow-up [resolveAddress] call can reuse the cached MCToken
-// instead of re-authenticating. Retries once after a server-side token
-// rejection so a server-revoked but time-valid cached MCToken doesn't
-// strand the user.
-func fetchFeaturedListWithClient(parent context.Context, tokenSource oauth2.TokenSource) ([]featuredServer, *gatheringsClient, error) {
+// fetchFeaturedListWithClient pulls the partner catalog and live-events
+// list, merging gatherings to the top to match the in-game Servers tab.
+// Returns the client so resolveAddress can reuse its cached MCToken.
+// One retry on ErrAuthRejected handles a server-revoked but time-valid
+// cached MCToken.
+func fetchFeaturedListWithClient(parent context.Context, tokenSource oauth2.TokenSource) ([]franchise.Server, *franchise.Client, error) {
 	ctx, cancel := context.WithTimeout(parent, featuredAPITimeout)
 	defer cancel()
 
-	client, err := newGatheringsClient(ctx, tokenSource)
+	client, err := newFranchiseClient(ctx, tokenSource)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	for attempt := range 2 {
-		tok, err := client.Token(ctx)
+		partners, err := client.PartnerCatalog(ctx)
 		if err != nil {
-			return nil, nil, err
-		}
-		partners, err := fetchPartnerCatalog(ctx, client.gatheringsURI, tok.AuthorizationHeader)
-		if err != nil {
-			if errors.Is(err, errAuthRejected) && attempt == 0 {
-				client.invalidate()
+			if errors.Is(err, franchise.ErrAuthRejected) && attempt == 0 {
+				invalidateFranchise(client)
 				continue
 			}
 			return nil, nil, err
 		}
-		// Gathering fetch failures (other than auth) don't have to abort
-		// the whole list — an empty events slot is the normal case for
-		// most cohorts most of the time, and the partner rows are still
-		// useful on their own.
-		var gatherings []featuredServer
-		if g, gErr := fetchGatherings(ctx, client.gatheringsURI, tok.AuthorizationHeader); gErr == nil {
+		// Non-auth gatherings failures don't abort - partner rows are
+		// still useful and most cohorts have empty events most of the time.
+		var gatherings []franchise.Server
+		if g, gErr := client.LiveEvents(ctx); gErr == nil {
 			gatherings = g
-		} else if errors.Is(gErr, errAuthRejected) && attempt == 0 {
-			client.invalidate()
+		} else if errors.Is(gErr, franchise.ErrAuthRejected) && attempt == 0 {
+			invalidateFranchise(client)
 			continue
 		} else {
 			fmt.Fprintf(os.Stderr, "  Warning: could not fetch live events: %v\n", gErr)
 		}
+		persistFranchiseToken(client)
 		return append(gatherings, partners...), client, nil
 	}
-	return nil, nil, errAuthRejected
+	return nil, nil, franchise.ErrAuthRejected
 }
 
-// pingAll fills in Online/Players/MOTD on every entry with a public
-// address. The semaphore is acquired *before* the goroutine spawn so we
-// genuinely bound goroutine count, not just in-flight work, and so a
-// cancel cancels everything still queued. ctx propagates to each ping.
-func pingAll(ctx context.Context, servers []featuredServer) {
+// pingAll fills Online/Players/MOTD on every entry with a public
+// address. Semaphore is acquired before goroutine spawn to bound
+// goroutine count and let cancel hit queued work too.
+func pingAll(ctx context.Context, servers []franchise.Server) {
 	sem := make(chan struct{}, featuredPingConcurrency)
 	var wg sync.WaitGroup
 	for i := range servers {
@@ -260,7 +240,7 @@ func pingAll(ctx context.Context, servers []featuredServer) {
 	wg.Wait()
 }
 
-func pingOne(parent context.Context, s *featuredServer) {
+func pingOne(parent context.Context, s *franchise.Server) {
 	ctx, cancel := context.WithTimeout(parent, featuredPingTimeout)
 	defer cancel()
 	data, err := raknet.PingContext(ctx, s.Address())
@@ -281,13 +261,12 @@ func pingOne(parent context.Context, s *featuredServer) {
 	}
 }
 
-func printFeaturedTable(servers []featuredServer) {
+func printFeaturedTable(servers []franchise.Server) {
 	const (
 		nameColMin = 4
 		addrColMin = 7
 	)
 
-	// Compute column widths from actual data so no cell overflows its lane.
 	idxWidth := len(strconv.Itoa(len(servers)))
 	nameWidth := nameColMin
 	addrWidth := addrColMin
@@ -311,14 +290,13 @@ func printFeaturedTable(servers []featuredServer) {
 	}
 }
 
-// addressColumn renders the second-to-last column of the table. Direct
-// partners show their inline host:port; experience and gathering rows
-// show a tag indicating which API call would resolve them on download.
-func addressColumn(s featuredServer) string {
+// addressColumn renders inline host:port for direct partners, or a
+// resolve-on-download tag for experience/gathering rows.
+func addressColumn(s franchise.Server) string {
 	switch s.Kind {
-	case kindGathering:
+	case franchise.KindGathering:
 		return "(live event)"
-	case kindPartnerExperience:
+	case franchise.KindPartnerExperience:
 		return "(experience-join)"
 	}
 	if s.HasAddress() {
@@ -327,11 +305,11 @@ func addressColumn(s featuredServer) string {
 	return "(no address)"
 }
 
-func tagFor(s featuredServer) (tag, color string) {
+func tagFor(s franchise.Server) (tag, color string) {
 	switch s.Kind {
-	case kindGathering:
+	case franchise.KindGathering:
 		return "[EVT]", colorYellow
-	case kindPartnerExperience:
+	case franchise.KindPartnerExperience:
 		return "[EXP]", colorCyan
 	}
 	switch {
@@ -342,11 +320,11 @@ func tagFor(s featuredServer) (tag, color string) {
 	}
 }
 
-func statusFor(s featuredServer) string {
+func statusFor(s franchise.Server) string {
 	switch s.Kind {
-	case kindGathering:
+	case franchise.KindGathering:
 		return "resolve on download"
-	case kindPartnerExperience:
+	case franchise.KindPartnerExperience:
 		return "resolve on download"
 	}
 	if !s.Online {
@@ -358,8 +336,7 @@ func statusFor(s featuredServer) string {
 	return fmt.Sprintf("online %s players", humanCount(s.Players))
 }
 
-// humanCount renders integer counts in a compact form: 14104 -> "14k",
-// 1_543_000 -> "1.5M", anything under 1000 stays as-is.
+// humanCount: 14104 -> "14k", 1_543_000 -> "1.5M", <1000 unchanged.
 func humanCount(n int) string {
 	switch {
 	case n >= 1_000_000:

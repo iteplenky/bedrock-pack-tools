@@ -1,4 +1,4 @@
-package main
+package franchise
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ---------- franchiseRequest ----------
+// ---------- request ----------
 
 func TestFranchiseRequest_OKReturnsBody(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,9 +24,9 @@ func TestFranchiseRequest_OKReturnsBody(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	body, err := franchiseRequest(context.Background(), http.MethodGet, ts.URL, nil, "MCToken test")
+	body, err := request(context.Background(), http.MethodGet, ts.URL, nil, "MCToken test")
 	if err != nil {
-		t.Fatalf("franchiseRequest: %v", err)
+		t.Fatalf("request: %v", err)
 	}
 	if string(body) != `{"ok":true}` {
 		t.Errorf("body = %q, want %q", body, `{"ok":true}`)
@@ -38,10 +38,10 @@ func TestFranchiseRequest_AuthRejected(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(status)
 		}))
-		_, err := franchiseRequest(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
+		_, err := request(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
 		ts.Close()
-		if !errors.Is(err, errAuthRejected) {
-			t.Errorf("status %d: err = %v, want errAuthRejected", status, err)
+		if !errors.Is(err, ErrAuthRejected) {
+			t.Errorf("status %d: err = %v, want ErrAuthRejected", status, err)
 		}
 	}
 }
@@ -52,7 +52,7 @@ func TestFranchiseRequest_OtherStatusCarriesCode(t *testing.T) {
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, `{"namespace":"X","code":"Y","message":"z"}`)
 		}))
-		_, err := franchiseRequest(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
+		_, err := request(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
 		ts.Close()
 		if got := httpStatusOf(err); got != status {
 			t.Errorf("httpStatusOf = %d, want %d (err: %v)", got, status, err)
@@ -73,9 +73,9 @@ func TestFranchiseRequest_POSTSetsContentType(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := franchiseRequest(context.Background(), http.MethodPost, ts.URL, []byte(`{"k":"v"}`), "MCToken x")
+	_, err := request(context.Background(), http.MethodPost, ts.URL, []byte(`{"k":"v"}`), "MCToken x")
 	if err != nil {
-		t.Fatalf("franchiseRequest: %v", err)
+		t.Fatalf("request: %v", err)
 	}
 }
 
@@ -88,25 +88,25 @@ func TestFranchiseRequest_GETOmitsContentType(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := franchiseRequest(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
+	_, err := request(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
 	if err != nil {
-		t.Fatalf("franchiseRequest: %v", err)
+		t.Fatalf("request: %v", err)
 	}
 }
 
 func TestFranchiseRequest_BodyLimit(t *testing.T) {
-	// Server sends franchiseBodyLimit+1024 bytes; reader should cap at the limit.
+	// Server sends bodyLimit+1024 bytes; reader should cap at the limit.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(make([]byte, franchiseBodyLimit+1024))
+		_, _ = w.Write(make([]byte, bodyLimit+1024))
 	}))
 	defer ts.Close()
 
-	body, err := franchiseRequest(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
+	body, err := request(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
 	if err != nil {
-		t.Fatalf("franchiseRequest: %v", err)
+		t.Fatalf("request: %v", err)
 	}
-	if len(body) != franchiseBodyLimit {
-		t.Errorf("body len = %d, want %d (cap)", len(body), franchiseBodyLimit)
+	if len(body) != bodyLimit {
+		t.Errorf("body len = %d, want %d (cap)", len(body), bodyLimit)
 	}
 }
 

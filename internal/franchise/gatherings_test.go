@@ -1,7 +1,8 @@
-package main
+package franchise
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +15,9 @@ import (
 
 func TestVersionInRange(t *testing.T) {
 	cases := []struct {
-		name             string
+		name              string
 		current, min, max string
-		want             bool
+		want              bool
 	}{
 		{"unbounded", "1.21.90", "", "", true},
 		{"min only, equal", "1.21.90", "1.21.90", "", true},
@@ -51,7 +52,7 @@ func TestCompareDotted(t *testing.T) {
 		want int
 	}{
 		{"1.0", "1.0", 0},
-		{"1.0", "1.0.0", 0},  // implicit-zero padding
+		{"1.0", "1.0.0", 0}, // implicit-zero padding
 		{"1.0.1", "1.0", 1},
 		{"1.0", "1.0.1", -1},
 		{"1.21.90", "1.21.9", 1},
@@ -92,18 +93,18 @@ func TestTranslatedFieldPick(t *testing.T) {
 	}
 }
 
-// ---------- featuredServer ----------
+// ---------- Server ----------
 
 func TestFeaturedServer_HasAddress(t *testing.T) {
 	cases := []struct {
 		name string
-		s    featuredServer
+		s    Server
 		want bool
 	}{
-		{"both set", featuredServer{Host: "h", Port: 1}, true},
-		{"host empty", featuredServer{Host: "", Port: 1}, false},
-		{"port zero", featuredServer{Host: "h", Port: 0}, false},
-		{"both empty", featuredServer{}, false},
+		{"both set", Server{Host: "h", Port: 1}, true},
+		{"host empty", Server{Host: "", Port: 1}, false},
+		{"port zero", Server{Host: "h", Port: 0}, false},
+		{"both empty", Server{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,15 +116,15 @@ func TestFeaturedServer_HasAddress(t *testing.T) {
 }
 
 func TestFeaturedServer_Address(t *testing.T) {
-	if got := (featuredServer{Host: "example.com", Port: 19132}).Address(); got != "example.com:19132" {
+	if got := (Server{Host: "example.com", Port: 19132}).Address(); got != "example.com:19132" {
 		t.Errorf("Address() = %q, want example.com:19132", got)
 	}
-	if got := (featuredServer{}).Address(); got != "" {
+	if got := (Server{}).Address(); got != "" {
 		t.Errorf("Address() with no host/port = %q, want empty", got)
 	}
 }
 
-// ---------- fetchPartnerCatalog (httptest) ----------
+// ---------- partnerCatalog (httptest) ----------
 
 func TestFetchPartnerCatalog_Decode(t *testing.T) {
 	// Two items: one direct (url+port), one experience-only.
@@ -141,25 +142,25 @@ func TestFetchPartnerCatalog_Decode(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
-		if !strings.HasSuffix(r.URL.Path, gatheringsBlobPath) {
-			t.Errorf("path = %s, want suffix %s", r.URL.Path, gatheringsBlobPath)
+		if !strings.HasSuffix(r.URL.Path, pathBlob) {
+			t.Errorf("path = %s, want suffix %s", r.URL.Path, pathBlob)
 		}
 		_, _ = io.WriteString(w, resp)
 	}))
 	defer ts.Close()
 
 	u, _ := url.Parse(ts.URL)
-	got, err := fetchPartnerCatalog(context.Background(), u, "MCToken x")
+	got, err := partnerCatalog(context.Background(), u, "MCToken x")
 	if err != nil {
-		t.Fatalf("fetchPartnerCatalog: %v", err)
+		t.Fatalf("partnerCatalog: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("got %d items, want 2", len(got))
 	}
-	if got[0].Kind != kindPartnerDirect || got[0].Host != "a.example" || got[0].Port != 19132 {
+	if got[0].Kind != KindPartnerDirect || got[0].Host != "a.example" || got[0].Port != 19132 {
 		t.Errorf("item 0 = %+v, want direct a.example:19132", got[0])
 	}
-	if got[1].Kind != kindPartnerExperience || got[1].ExperienceID != "abc-123" {
+	if got[1].Kind != KindPartnerExperience || got[1].ExperienceID != "abc-123" {
 		t.Errorf("item 1 = %+v, want experience abc-123", got[1])
 	}
 }
@@ -180,16 +181,16 @@ func TestFetchPartnerCatalog_FiltersVersion(t *testing.T) {
 	}))
 	defer ts.Close()
 	u, _ := url.Parse(ts.URL)
-	got, err := fetchPartnerCatalog(context.Background(), u, "MCToken x")
+	got, err := partnerCatalog(context.Background(), u, "MCToken x")
 	if err != nil {
-		t.Fatalf("fetchPartnerCatalog: %v", err)
+		t.Fatalf("partnerCatalog: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("got %d items, want 0 (future minClientVersion should filter)", len(got))
 	}
 }
 
-// ---------- fetchGatherings (httptest) ----------
+// ---------- liveEvents (httptest) ----------
 
 func TestFetchGatherings_Decode(t *testing.T) {
 	resp := `{
@@ -211,15 +212,138 @@ func TestFetchGatherings_Decode(t *testing.T) {
 	}))
 	defer ts.Close()
 	u, _ := url.Parse(ts.URL)
-	got, err := fetchGatherings(context.Background(), u, "MCToken x")
+	got, err := liveEvents(context.Background(), u, "MCToken x")
 	if err != nil {
-		t.Fatalf("fetchGatherings: %v", err)
+		t.Fatalf("liveEvents: %v", err)
 	}
 	if len(got) != 1 || got[0].GatheringID != "g1" {
 		t.Errorf("got %+v, want only g1 (Disabled/Private filtered)", got)
 	}
-	if got[0].Kind != kindGathering {
-		t.Errorf("got[0].Kind = %v, want kindGathering", got[0].Kind)
+	if got[0].Kind != KindGathering {
+		t.Errorf("got[0].Kind = %v, want KindGathering", got[0].Kind)
+	}
+}
+
+// ---------- joinExperience ----------
+
+func TestJoinExperience_OK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, pathJoinExpURL) {
+			t.Errorf("path = %s, want suffix %s", r.URL.Path, pathJoinExpURL)
+		}
+		_, _ = io.WriteString(w, `{"status":"OK","code":200,"result":{"ipV4Address":"1.2.3.4","port":19132}}`)
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	host, port, err := joinExperience(context.Background(), u, "MCToken x", "exp-1")
+	if err != nil {
+		t.Fatalf("joinExperience: %v", err)
+	}
+	if host != "1.2.3.4" || port != 19132 {
+		t.Errorf("got %s:%d, want 1.2.3.4:19132", host, port)
+	}
+}
+
+func TestJoinExperience_404IsOffline(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	_, _, err := joinExperience(context.Background(), u, "MCToken x", "exp-1")
+	if !errors.Is(err, ErrExperienceOffline) {
+		t.Errorf("got %v, want ErrExperienceOffline", err)
+	}
+}
+
+func TestJoinExperience_ShapelessIsOffline(t *testing.T) {
+	// A 200 OK with no address fields should map to ErrExperienceOffline
+	// so callers don't have to second-guess. The unexpected-shape note
+	// is wrapped via %w so errors.Is still hits the sentinel.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"result":{}}`)
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	_, _, err := joinExperience(context.Background(), u, "MCToken x", "exp-1")
+	if !errors.Is(err, ErrExperienceOffline) {
+		t.Errorf("got %v, want ErrExperienceOffline", err)
+	}
+}
+
+// ---------- venue ----------
+
+func TestVenueAddress_OK(t *testing.T) {
+	hit := struct {
+		access bool
+		venue  bool
+	}{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, pathAccess):
+			hit.access = true
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, pathVenue):
+			hit.venue = true
+			_, _ = io.WriteString(w, `{"status":"OK","code":200,"result":{"venue":{"serverIpAddress":"5.6.7.8","serverPort":19133}}}`)
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	host, port, err := venue(context.Background(), u, "MCToken x", "gath-1")
+	if err != nil {
+		t.Fatalf("venue: %v", err)
+	}
+	if !hit.access || !hit.venue {
+		t.Errorf("expected both /access and /venue to be hit, got %+v", hit)
+	}
+	if host != "5.6.7.8" || port != 19133 {
+		t.Errorf("got %s:%d, want 5.6.7.8:19133", host, port)
+	}
+}
+
+func TestVenueAddress_AccessFails(t *testing.T) {
+	// /access returns 500. We surface a wrapped "access warm-up" error
+	// instead of pretending the venue lookup happened.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, pathAccess) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		t.Errorf("venue should not be called when access fails")
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	_, _, err := venue(context.Background(), u, "MCToken x", "gath-1")
+	if err == nil {
+		t.Fatal("expected error from /access failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "access warm-up") {
+		t.Errorf("err = %v, want it to mention 'access warm-up'", err)
+	}
+}
+
+func TestVenueAddress_NoServerIP(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, pathAccess) {
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"result":{"venue":{}}}`)
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	_, _, err := venue(context.Background(), u, "MCToken x", "gath-1")
+	if err == nil {
+		t.Fatal("expected error when venue has no serverIpAddress, got nil")
+	}
+	if !strings.Contains(err.Error(), "serverIpAddress") {
+		t.Errorf("err = %v, want it to mention serverIpAddress", err)
 	}
 }
 
@@ -229,9 +353,9 @@ func TestFetchGatherings_EmptyCohort(t *testing.T) {
 	}))
 	defer ts.Close()
 	u, _ := url.Parse(ts.URL)
-	got, err := fetchGatherings(context.Background(), u, "MCToken x")
+	got, err := liveEvents(context.Background(), u, "MCToken x")
 	if err != nil {
-		t.Fatalf("fetchGatherings on empty cohort: %v", err)
+		t.Fatalf("liveEvents on empty cohort: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("empty cohort should yield zero items, got %d", len(got))
