@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/cfb8"
 )
 
 func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
@@ -17,7 +19,7 @@ func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
 		return nil, fmt.Errorf("contents.json too small (%d bytes)", len(data))
 	}
 	encrypted := data[contentsHeaderSize:]
-	plaintext, err := decryptAES256CFB8(encrypted, []byte(packKey))
+	plaintext, err := cfb8.Decrypt(encrypted, []byte(packKey))
 	if err != nil {
 		return nil, fmt.Errorf("decrypt contents.json: %w", err)
 	}
@@ -318,7 +320,7 @@ func processFile(entry contentsEntry, srcPath, dstPath string) (decrypted bool, 
 		return false, os.WriteFile(dstPath, raw, 0644)
 	}
 
-	dec, err := decryptAES256CFB8(raw, []byte(entry.Key))
+	dec, err := cfb8.Decrypt(raw, []byte(entry.Key))
 	if err != nil {
 		return false, fmt.Errorf("decrypt %s: %w", entry.Path, err)
 	}

@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/cfb8"
 )
 
 func runEncrypt(args []string) error {
@@ -227,7 +229,7 @@ func encryptFile(relPath, srcPath, dstPath string) (contentsEntry, error) {
 		return contentsEntry{Path: relPath}, fmt.Errorf("generate key: %w", err)
 	}
 
-	enc, err := encryptAES256CFB8(raw, []byte(fileKey))
+	enc, err := cfb8.Encrypt(raw, []byte(fileKey))
 	if err != nil {
 		return contentsEntry{Path: relPath}, fmt.Errorf("encrypt: %w", err)
 	}
@@ -242,7 +244,7 @@ func buildEncryptedContents(packUUID, masterKey string, entries []contentsEntry)
 		return nil, err
 	}
 
-	encrypted, err := encryptAES256CFB8(payload, []byte(masterKey))
+	encrypted, err := cfb8.Encrypt(payload, []byte(masterKey))
 	if err != nil {
 		return nil, err
 	}
