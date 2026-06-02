@@ -27,19 +27,13 @@ func deviceIDPath() (string, error) {
 }
 
 // loadOrCreateDeviceID returns the persisted device.ID, generating a
-// fresh UUID on first run. The ID is fed into gophertunnel's MCToken
-// mint via TokenConfig.Device.ID. PlayFab Experiments cohort assignment
-// is primarily keyed on the signed-in Xbox account (XUID); device.ID is
-// a secondary axis used for device-tier rollouts and telemetry segments,
-// so persisting it stabilises the *subset* of treatments that vary by
-// device while leaving the XUID-bound catalog slice unchanged. Practical
-// effect: deterministic CLI output across runs without flipping which
-// partners or events the account is eligible to see.
-//
-// On any persistence error (no UserConfigDir, write fails, etc.) the
-// function still returns a fresh UUID so the auth flow can proceed —
-// the user just loses cohort stability for this one run, which is the
-// least-surprising failure mode.
+// fresh UUID on first run. Fed to gophertunnel's MCToken mint via
+// TokenConfig.Device.ID. PlayFab Experiments cohort assignment is
+// primarily keyed on XUID; device.ID is a secondary axis for
+// device-tier rollouts. Persisting it keeps that subset stable across
+// runs so partner/event eligibility doesn't flip between invocations.
+// On any persistence error a fresh UUID is still returned - the user
+// loses cohort stability for the run but auth proceeds.
 func loadOrCreateDeviceID() string {
 	path, err := deviceIDPath()
 	if err != nil {
@@ -52,7 +46,7 @@ func loadOrCreateDeviceID() string {
 				return id
 			}
 		}
-		// File exists but contents are corrupt — overwrite with a fresh ID.
+		// File exists but contents are corrupt - overwrite with a fresh ID.
 	}
 
 	id := uuid.NewString()
@@ -63,9 +57,8 @@ func loadOrCreateDeviceID() string {
 }
 
 // writeDeviceIDAtomic writes the ID via tmp + rename so two concurrent
-// first-run invocations can't leave a truncated file. Permissions are
-// 0600 to mirror the token caches — device.ID is a stable user
-// identifier, not as sensitive as a JWT but still worth scoping.
+// first-run invocations can't leave a truncated file. 0600 perms
+// mirror the token caches.
 func writeDeviceIDAtomic(path, id string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".device_id-*.tmp")
 	if err != nil {
@@ -92,18 +85,21 @@ func writeDeviceIDAtomic(path, id string) error {
 	return nil
 }
 
-// migrateMCTokenCacheOnce drops any pre-v3.2.0 .mctoken.json that was
-// minted before device.ID persistence existed. Those tokens carry the
-// treatments assigned to a now-discarded ephemeral device.ID, so reusing
-// them would lock the user into the stale cohort until natural expiry.
-// Triggered by the presence of .device_id without a sibling marker; the
-// marker file is written on first successful migration.
+// migrateMCTokenCacheOnce drops any pre-v3.2.0 .mctoken.json minted
+// before device.ID persistence existed. Those tokens carry treatments
+// from a now-discarded ephemeral device.ID, locking the user into a
+// stale cohort until natural expiry. Marker prevents repeat migration.
 func migrateMCTokenCacheOnce() {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return
 	}
-	base := filepath.Join(dir, "bedrock-pack-tools")
+	migrateMCTokenCacheIn(filepath.Join(dir, "bedrock-pack-tools"))
+}
+
+// migrateMCTokenCacheIn is the testable inner form, parameterised on
+// the cache base directory so unit tests can use t.TempDir().
+func migrateMCTokenCacheIn(base string) {
 	marker := filepath.Join(base, ".v32-migrated")
 	if _, err := os.Stat(marker); err == nil {
 		return

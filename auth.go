@@ -50,10 +50,9 @@ func saveToken(t *oauth2.Token) {
 	}
 }
 
-// tokenSourceAnnounced suppresses repeated "Auth: using cached Xbox
-// token" prints when getTokenSource is called multiple times in a single
-// run (e.g. featuredDownload calls it, then runDownload calls it again).
-// The first announcement still happens so the user knows auth ran.
+// tokenSourceAnnounced keeps the "Auth: using cached Xbox token" line
+// to one print per CLI invocation - featuredDownload calls getTokenSource
+// then chains into runDownload which would otherwise announce again.
 var tokenSourceAnnounced bool
 
 func getTokenSource() (oauth2.TokenSource, error) {

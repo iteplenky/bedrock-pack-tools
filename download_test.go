@@ -31,7 +31,7 @@ func TestIsZipFile_HTML(t *testing.T) {
 		t.Fatal(err)
 	}
 	if isZipFile(p) {
-		t.Error("expected false for HTML body — this is the broken-CDN case")
+		t.Error("expected false for HTML body - this is the broken-CDN case")
 	}
 }
 

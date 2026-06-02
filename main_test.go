@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestHandleErr_ExitCodes verifies the classification matrix the main
@@ -94,3 +95,27 @@ func TestHandleErr_NilWriterDoesNotPanic(t *testing.T) {
 	_ = handleErr(io.Discard, errors.New("any err"))
 }
 
+func TestDialTimeout(t *testing.T) {
+	const fallback = 120 * time.Second
+	cases := []struct {
+		name     string
+		envValue string
+		want     time.Duration
+	}{
+		{"empty uses fallback", "", fallback},
+		{"valid 5m override", "5m", 5 * time.Minute},
+		{"valid 90s override", "90s", 90 * time.Second},
+		{"zero rejected", "0s", fallback},
+		{"negative rejected", "-1s", fallback},
+		{"unparseable rejected", "five minutes", fallback},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(dialTimeoutEnv, tc.envValue)
+			got := dialTimeout(fallback)
+			if got != tc.want {
+				t.Errorf("dialTimeout with env=%q = %v, want %v", tc.envValue, got, tc.want)
+			}
+		})
+	}
+}

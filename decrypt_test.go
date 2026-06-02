@@ -88,6 +88,28 @@ func TestDecryptContentsJSON_TrailingNulls(t *testing.T) {
 	}
 }
 
+func TestDecryptAll_DefaultOutBase(t *testing.T) {
+	cases := []struct {
+		cacheDir string
+		want     string
+	}{
+		{".", "decrypted"},
+		{"./", "decrypted"},
+		{"/", "decrypted"},
+		{"./packs", "./packs_decrypted"},
+		{"./packs/", "./packs_decrypted"},
+		{"my_packs", "my_packs_decrypted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cacheDir, func(t *testing.T) {
+			got := defaultDecryptOutBase(tc.cacheDir)
+			if got != tc.want {
+				t.Errorf("defaultDecryptOutBase(%q) = %q, want %q", tc.cacheDir, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProcessFile_CopyPlain(t *testing.T) {
 	tmp := t.TempDir()
 	srcDir := filepath.Join(tmp, "src")

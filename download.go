@@ -267,6 +267,8 @@ func (d *downloadTracker) fetchOnce(url string) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
+	// Match the real Bedrock client's UA. franchise.go does the same.
+	req.Header.Set("User-Agent", "libhttpclient/1.0.0.0")
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
 		return "", 0, err
@@ -312,16 +314,13 @@ func isZipFile(path string) bool {
 }
 
 func runDownload(args []string) error {
-	verbose := false
-	filtered := make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "-v" || a == "--verbose" {
-			verbose = true
-		} else {
-			filtered = append(filtered, a)
-		}
+	var verbose bool
+	fs := newFlagSet()
+	fs.Bool(&verbose, "-v", "--verbose")
+	args, err := fs.parse(args)
+	if err != nil {
+		return err
 	}
-	args = filtered
 
 	if len(args) < 1 {
 		fmt.Println(`Usage: bedrock-pack-tools download [-v] <server:port> [output-dir]
@@ -369,7 +368,7 @@ Examples:
 	// Ctrl+C cancels DialContext and in-flight HTTP fetches.
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
-	ctx, cancel := context.WithTimeout(sigCtx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(sigCtx, dialTimeout(5*time.Minute))
 	defer cancel()
 
 	tracker := &downloadTracker{

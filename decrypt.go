@@ -81,6 +81,16 @@ type packJob struct {
 	outDir string
 }
 
+// defaultDecryptOutBase picks the sibling output dir for --all (avoids
+// colliding with a real pack named "decrypted" inside cacheDir).
+func defaultDecryptOutBase(cacheDir string) string {
+	trimmed := strings.TrimRight(cacheDir, "/\\")
+	if trimmed == "" || trimmed == "." {
+		return "decrypted"
+	}
+	return trimmed + "_decrypted"
+}
+
 func decryptAll(keysFile, cacheDir, outBase string) error {
 	data, err := os.ReadFile(keysFile)
 	if err != nil {
@@ -92,9 +102,7 @@ func decryptAll(keysFile, cacheDir, outBase string) error {
 	}
 
 	if outBase == "" {
-		// Sibling dir, not a child — avoids colliding with a real pack
-		// named "decrypted" inside cacheDir.
-		outBase = strings.TrimRight(cacheDir, "/\\") + "_decrypted"
+		outBase = defaultDecryptOutBase(cacheDir)
 	}
 
 	entries, err := os.ReadDir(cacheDir)

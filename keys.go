@@ -95,7 +95,7 @@ Examples:
 
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
-	ctx, cancel := context.WithTimeout(sigCtx, 120*time.Second)
+	ctx, cancel := context.WithTimeout(sigCtx, dialTimeout(120*time.Second))
 	defer cancel()
 
 	tracker := &keysTracker{

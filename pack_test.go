@@ -94,6 +94,11 @@ func TestSanitizePackName(t *testing.T) {
 		{"hello.world", "helloworld"},
 		{"", ""},
 		{"a b  c", "a_b__c"},
+		// Unicode preservation: partner servers use non-Latin pack names.
+		{"Кириллический Pack", "Кириллический_Pack"},
+		{"日本語パック", "日本語パック"},
+		{"Pack 中文 1", "Pack_中文_1"},
+		{"emoji 🎮 pack", "emoji__pack"}, // emoji are symbols, not letters - dropped
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {

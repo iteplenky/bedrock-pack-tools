@@ -1,10 +1,49 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// TestEncryptPack_EmptyPackRejected: a pack containing only manifest +
+// icon has no encryptable content; errPackEmpty fires.
+func TestEncryptPack_EmptyPackRejected(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pack")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"header":{"uuid":"01234567-89ab-cdef-0123-456789abcdef"}}`)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pack_icon.png"), []byte("png"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := encryptPack(dir, testMasterKey, t.TempDir())
+	if !errors.Is(err, errPackEmpty) {
+		t.Errorf("err = %v, want errPackEmpty chain", err)
+	}
+}
+
+// TestEncryptPack_ManifestOnlyRejected: just manifest.json.
+func TestEncryptPack_ManifestOnlyRejected(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pack")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"header":{"uuid":"01234567-89ab-cdef-0123-456789abcdef"}}`)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := encryptPack(dir, testMasterKey, t.TempDir())
+	if !errors.Is(err, errPackEmpty) {
+		t.Errorf("err = %v, want errPackEmpty chain", err)
+	}
+}
 
 func setupTestPack(t *testing.T) string {
 	t.Helper()
@@ -196,5 +235,32 @@ func TestGenerateKey(t *testing.T) {
 			t.Fatalf("duplicate key generated: %s", key)
 		}
 		seen[key] = true
+	}
+}
+
+// TestRunEncrypt_KeyOutCreatesMissingDir: --key-out pointed at a path
+// whose parent directory does not exist yet must still land the key
+// there - that vault-dir case is the whole point of the flag, and when
+// the key is auto-generated it exists only in stdout, so a failed write
+// would lose it.
+func TestRunEncrypt_KeyOutCreatesMissingDir(t *testing.T) {
+	packDir := setupTestPack(t)
+	out := t.TempDir()
+	mcpackPath := filepath.Join(out, "Test.mcpack")
+	keyPath := filepath.Join(out, "vault", "sub", "pack.key") // parent dirs absent
+
+	if err := runEncrypt([]string{"--key-out", keyPath, packDir, testMasterKey, mcpackPath}); err != nil {
+		t.Fatalf("runEncrypt: %v", err)
+	}
+
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("key not written to --key-out path: %v", err)
+	}
+	if string(keyData) != testMasterKey {
+		t.Errorf("key file: got %q, want %q", keyData, testMasterKey)
+	}
+	if _, err := os.Stat(mcpackPath); err != nil {
+		t.Fatalf("mcpack not created: %v", err)
 	}
 }

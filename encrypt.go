@@ -17,9 +17,17 @@ import (
 )
 
 func runEncrypt(args []string) error {
+	var keyOut string
+	fs := newFlagSet()
+	fs.String(&keyOut, "--key-out", "-k")
+	args, err := fs.parse(args)
+	if err != nil {
+		return err
+	}
+
 	if len(args) < 1 {
 		fmt.Println(`Usage:
-  bedrock-pack-tools encrypt <pack-dir> [key] [output.mcpack]
+  bedrock-pack-tools encrypt [--key-out PATH] <pack-dir> [key] [output.mcpack]
 
 Encrypt a plain resource pack directory using AES-256-CFB8.
 Produces a ready-to-use .mcpack file and a .mcpack.key file.
@@ -27,10 +35,15 @@ Produces a ready-to-use .mcpack file and a .mcpack.key file.
 If the key is omitted, a random 32-character key is generated.
 If the output is omitted, it defaults to <pack-name>.mcpack in the current directory.
 
+Flags:
+  --key-out PATH, -k PATH   Write the master key to PATH instead of
+                            the default <output.mcpack>.key location.
+
 Examples:
   bedrock-pack-tools encrypt ./MyPack_v1.0.0/
   bedrock-pack-tools encrypt ./MyPack_v1.0.0/ MY_32_CHARACTER_KEY_HERE_1234567
-  bedrock-pack-tools encrypt ./MyPack_v1.0.0/ MY_32_CHARACTER_KEY_HERE_1234567 ./out/MyPack.mcpack`)
+  bedrock-pack-tools encrypt ./MyPack_v1.0.0/ MY_32_CHARACTER_KEY_HERE_1234567 ./out/MyPack.mcpack
+  bedrock-pack-tools encrypt --key-out ~/keys/pack.key ./MyPack_v1.0.0/`)
 		return errUsage
 	}
 
@@ -46,7 +59,6 @@ Examples:
 			return fmt.Errorf("%w: got %d characters", errPackBadKeyLen, len(masterKey))
 		}
 	} else {
-		var err error
 		masterKey, err = generateKey()
 		if err != nil {
 			return fmt.Errorf("generate key: %w", err)
@@ -61,6 +73,9 @@ Examples:
 		mcpackPath += mcpackExt
 	}
 	keyPath := mcpackPath + ".key"
+	if keyOut != "" {
+		keyPath = keyOut
+	}
 
 	fmt.Println()
 	fmt.Println("  Pack:    " + packDir)
@@ -85,6 +100,9 @@ Examples:
 	}
 	if err := zipDir(tmpDir, mcpackPath); err != nil {
 		return fmt.Errorf("create mcpack: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
+		return fmt.Errorf("create key output dir: %w", err)
 	}
 	if err := os.WriteFile(keyPath, []byte(masterKey), 0600); err != nil {
 		return fmt.Errorf("write key file: %w", err)
@@ -193,6 +211,13 @@ func encryptPack(packDir, masterKey, outDir string) (encryptStats, error) {
 			stats.copied++
 		}
 		entries = append(entries, r.entry)
+	}
+
+	// Empty-pack guard: manifest.json + pack_icon.png copy plain, so
+	// stats.encrypted == 0 means there's nothing the encrypt step adds
+	// over a plain zip.
+	if stats.encrypted == 0 {
+		return encryptStats{}, fmt.Errorf("%w (only %d non-encryptable files: manifest / icon)", errPackEmpty, stats.copied)
 	}
 
 	slices.SortFunc(entries, func(a, b contentsEntry) int {

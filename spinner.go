@@ -6,21 +6,15 @@ import (
 	"time"
 )
 
-// spinnerFrames is a 10-frame Braille rotation that reads as a smooth
-// spin in a monospace cell. Render at ~12 fps (80ms per frame).
 var spinnerFrames = []string{
 	"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 }
 
 const spinnerInterval = 80 * time.Millisecond
 
-// spinner shows a one-line animated indicator while a blocking call
-// runs. Call stop with an optional final message when the work finishes;
-// it replaces the spinner in place. Safe to stop twice.
-//
-// In NO_COLOR mode (clearLine == ""), the spinner degrades to printing
-// the label once with a trailing ellipsis and no animation, since
-// in-place rewrite via "\r\033[K" would corrupt non-TTY output.
+// spinner shows a one-line animated indicator. stop is safe to call
+// twice. In NO_COLOR mode it degrades to printing the label once -
+// in-place rewrite would corrupt non-TTY output.
 type spinner struct {
 	done chan struct{}
 	once sync.Once

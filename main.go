@@ -30,6 +30,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"time"
 )
 
 var errUsage = errors.New("usage")
@@ -40,6 +41,21 @@ var errUsage = errors.New("usage")
 var errPartialResult = errors.New("partial result")
 
 var version = "dev"
+
+const dialTimeoutEnv = "BPT_DIAL_TIMEOUT"
+
+// dialTimeout returns the DialContext timeout for keys/download.
+// Honours BPT_DIAL_TIMEOUT as a Go duration ("5m", "90s") when valid;
+// falls back to the caller default otherwise.
+func dialTimeout(fallback time.Duration) time.Duration {
+	if v := os.Getenv(dialTimeoutEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		fmt.Fprintf(os.Stderr, "  Warning: %s=%q is not a valid duration, using %s\n", dialTimeoutEnv, v, fallback)
+	}
+	return fallback
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -111,9 +127,13 @@ Usage:
   bedrock-pack-tools download <server:port> [output-dir]
   bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
   bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
-  bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
+  bedrock-pack-tools encrypt  [--key-out PATH] <pack-dir> [key] [output.mcpack]
   bedrock-pack-tools featured [download <index> [output-dir]]
   bedrock-pack-tools version
+
+Environment:
+  BPT_DIAL_TIMEOUT  Override the keys/download dial timeout (e.g. "5m", "90s").
+                    Useful for slow servers or long ResourcePacksInfo waits.
 
 Commands:
   keys      Connect to a Bedrock server and extract resource pack encryption keys.
