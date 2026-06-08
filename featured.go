@@ -156,13 +156,17 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 	case franchise.KindPartnerDirect:
 		return s.Address(), nil
 	case franchise.KindGathering:
-		host, port, err := client.Venue(ctx, s.GatheringID)
+		host, port, err := resolveWithRetry(client, func() (string, int, error) {
+			return client.Venue(ctx, s.GatheringID)
+		})
 		if err != nil {
 			return "", fmt.Errorf("resolve gathering %q: %w", s.Name, err)
 		}
 		return fmt.Sprintf("%s:%d", host, port), nil
 	case franchise.KindPartnerExperience:
-		host, port, err := client.JoinExperience(ctx, s.ExperienceID)
+		host, port, err := resolveWithRetry(client, func() (string, int, error) {
+			return client.JoinExperience(ctx, s.ExperienceID)
+		})
 		if err != nil {
 			if errors.Is(err, franchise.ErrExperienceOffline) {
 				return "", fmt.Errorf("%q has no active venue right now (the slot is listed but not joinable from outside the official client)", s.Name)
@@ -172,6 +176,18 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 		return fmt.Sprintf("%s:%d", host, port), nil
 	}
 	return "", fmt.Errorf("unknown featured kind for %q", s.Name)
+}
+
+// resolveWithRetry re-mints the MCToken once on ErrAuthRejected, mirroring
+// the catalog fetch - a server-revoked but time-valid cached token would
+// otherwise strand the resolve (per the franchise package contract).
+func resolveWithRetry(client *franchise.Client, call func() (string, int, error)) (string, int, error) {
+	host, port, err := call()
+	if errors.Is(err, franchise.ErrAuthRejected) {
+		invalidateFranchise(client)
+		host, port, err = call()
+	}
+	return host, port, err
 }
 
 // fetchFeaturedListWithClient pulls the partner catalog and live-events
