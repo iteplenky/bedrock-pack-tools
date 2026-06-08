@@ -63,7 +63,9 @@ func saveToken(t *oauth2.Token) {
 		fmt.Fprintf(os.Stderr, "Warning: could not marshal token: %v\n", err)
 		return
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	// Atomic write (tmp + rename) so a crash can't leave a truncated refresh
+	// token, and an existing looser-mode file gets retightened.
+	if err := atomicWriteFile(path, ".xbox_token-*.tmp", data, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save token: %v\n", err)
 	}
 }

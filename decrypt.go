@@ -275,52 +275,42 @@ func decryptPackFiles(packDir, outDir string, entries []contentsEntry) packStats
 		dstPath string
 	}
 
+	// contents.json comes from a downloaded, untrusted pack. Refuse any entry
+	// whose path escapes outDir (zip-slip), the same guard extractZip applies.
+	cleanBase := filepath.Clean(outDir) + string(os.PathSeparator)
 	var jobs []fileJob
+	var escaped int
 	for _, entry := range entries {
 		if entry.Path == contentsJSON {
+			continue
+		}
+		dstPath := filepath.Join(outDir, entry.Path)
+		if !strings.HasPrefix(filepath.Clean(dstPath), cleanBase) {
+			fmt.Fprintf(os.Stderr, "    %s[WARN]%s path escapes output dir, skipped: %s\n", colorYellow, colorReset, entry.Path)
+			escaped++
 			continue
 		}
 		jobs = append(jobs, fileJob{
 			entry:   entry,
 			srcPath: filepath.Join(packDir, entry.Path),
-			dstPath: filepath.Join(outDir, entry.Path),
+			dstPath: dstPath,
 		})
 	}
 
-	workers := min(runtime.NumCPU(), len(jobs))
-	jobCh := make(chan fileJob, workers)
-	resultCh := make(chan fileResult, len(jobs))
+	results := mapConcurrent(jobs, func(job fileJob) fileResult {
+		wasDecrypted, err := processFile(job.entry, job.srcPath, job.dstPath)
+		return fileResult{path: job.entry.Path, decrypted: wasDecrypted, err: err}
+	})
 
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for range workers {
-		go func() {
-			defer wg.Done()
-			for job := range jobCh {
-				wasDecrypted, err := processFile(job.entry, job.srcPath, job.dstPath)
-				resultCh <- fileResult{path: job.entry.Path, decrypted: wasDecrypted, err: err}
-			}
-		}()
-	}
-
-	for _, job := range jobs {
-		jobCh <- job
-	}
-	close(jobCh)
-
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	var stats packStats
-	for r := range resultCh {
-		if r.err != nil {
+	stats := packStats{errors: escaped}
+	for _, r := range results {
+		switch {
+		case r.err != nil:
 			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, r.path, r.err)
 			stats.errors++
-		} else if r.decrypted {
+		case r.decrypted:
 			stats.decrypted++
-		} else {
+		default:
 			stats.copied++
 		}
 	}

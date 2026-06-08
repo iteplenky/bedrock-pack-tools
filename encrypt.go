@@ -8,10 +8,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/cfb8"
 )
@@ -104,7 +102,7 @@ Examples:
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
 		return fmt.Errorf("create key output dir: %w", err)
 	}
-	if err := os.WriteFile(keyPath, []byte(masterKey), 0600); err != nil {
+	if err := atomicWriteFile(keyPath, ".mcpackkey-*.tmp", []byte(masterKey), 0600); err != nil {
 		return fmt.Errorf("write key file: %w", err)
 	}
 
@@ -161,45 +159,28 @@ func encryptPack(packDir, masterKey, outDir string) (encryptStats, error) {
 		srcPath string
 		dstPath string
 	}
-
-	jobCh := make(chan fileJob, runtime.NumCPU())
-	resultCh := make(chan result, len(files))
-
-	workers := min(runtime.NumCPU(), len(files))
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for range workers {
-		go func() {
-			defer wg.Done()
-			for job := range jobCh {
-				entry, err := encryptFile(job.relPath, job.srcPath, job.dstPath)
-				resultCh <- result{entry: entry, err: err}
-			}
-		}()
-	}
-
+	var jobs []fileJob
 	for _, rel := range files {
 		if rel == contentsJSON {
 			continue
 		}
-		jobCh <- fileJob{
+		jobs = append(jobs, fileJob{
 			relPath: rel,
 			srcPath: filepath.Join(packDir, rel),
 			dstPath: filepath.Join(outDir, rel),
-		}
+		})
 	}
-	close(jobCh)
 
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
+	results := mapConcurrent(jobs, func(job fileJob) result {
+		entry, err := encryptFile(job.relPath, job.srcPath, job.dstPath)
+		return result{entry: entry, err: err}
+	})
 
 	var (
 		stats   encryptStats
 		entries []contentsEntry
 	)
-	for r := range resultCh {
+	for _, r := range results {
 		if r.err != nil {
 			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, r.entry.Path, r.err)
 			stats.errors++

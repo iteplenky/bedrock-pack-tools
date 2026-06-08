@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/iteplenky/gophertunnel/minecraft"
@@ -45,6 +47,22 @@ const (
 // packs from mixing in one folder.
 func decryptOutBase(baseDir, server string) string {
 	return filepath.Join(baseDir, decryptedDir, sanitizeServerAddr(server))
+}
+
+// sanitizeVersion strips path separators (and other unsafe runes) from a
+// wire-supplied pack version so it can't steer the output path. Dots stay so
+// "1.2.3" remains readable; with no separators left, a literal ".." is inert.
+func sanitizeVersion(v string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '.' || r == '-' || r == '_':
+			return r
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			return r
+		default:
+			return -1
+		}
+	}, v)
 }
 
 // cdnInitialBackoff is var (not const) so tests can shrink it.
@@ -190,7 +208,7 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 		return
 	}
 
-	dirName := sanitizePackName(uid) + "_v" + tp.Version
+	dirName := sanitizePackName(uid) + "_v" + sanitizeVersion(tp.Version)
 	packDir := filepath.Join(d.outDir, dirName)
 
 	if isZipFile(tmpPath) {
@@ -214,7 +232,7 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 		// TexturePackInfo has no human-readable name; pull it from
 		// the extracted manifest so naming matches protocol downloads.
 		if name := readPackName(packDir); name != "" {
-			nicer := filepath.Join(d.outDir, sanitizePackName(name)+"_v"+tp.Version)
+			nicer := filepath.Join(d.outDir, sanitizePackName(name)+"_v"+sanitizeVersion(tp.Version))
 			if nicer != packDir {
 				if _, statErr := os.Stat(nicer); os.IsNotExist(statErr) {
 					if renameErr := os.Rename(packDir, nicer); renameErr == nil {
@@ -515,7 +533,16 @@ Examples:
 		fmt.Printf("  Keys: %d -> %s\n", len(keys), keysFile)
 		if decrypt {
 			fmt.Println()
-			return decryptAll(keysFile, outDir, decryptOutBase(outDir, server))
+			// The packs and keys are already on disk; a decrypt-step failure
+			// is recoverable, so report a partial result (exit 2) rather than
+			// a hard failure that implies nothing was saved.
+			if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
+				fmt.Printf("\n  Decrypt step failed: %v\n", derr)
+				fmt.Printf("  Packs and keys are saved - rerun:  bedrock-pack-tools decrypt --all %s %s\n\n", keysFile, outDir)
+				return errPartialResult
+			}
+			fmt.Println()
+			return nil
 		}
 		fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 	}

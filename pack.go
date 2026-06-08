@@ -184,5 +184,7 @@ func saveKeys(keys map[string]keyEntry, path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	// Atomic write so the secret keys never persist half-written, and so an
+	// existing looser-mode file gets retightened (os.WriteFile would not).
+	return atomicWriteFile(path, "._keys-*.tmp", data, 0600)
 }

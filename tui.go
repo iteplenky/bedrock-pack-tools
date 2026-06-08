@@ -133,16 +133,18 @@ type appModel struct {
 	actionCursor int
 
 	// run queue + live state.
-	act      action
-	jobs     []job
-	jobIdx   int
-	runProc  *os.Process
-	runCh    chan tea.Msg
-	paused   bool
-	canceled bool
-	statusLn string
-	logLines []string
-	results  []jobResult
+	act           action
+	jobs          []job
+	jobIdx        int
+	runProc       *os.Process
+	runCh         chan tea.Msg
+	resolveCancel context.CancelFunc // cancels an in-flight featured resolve
+	paused        bool
+	canceled      bool
+	statusLn      string
+	logLines      []string
+	results       []jobResult
+	runSkipped    int // decrypt entries skipped this run (not decryptable)
 }
 
 func newAppModel(ts oauth2.TokenSource) appModel {
@@ -331,10 +333,10 @@ func (m appModel) handleListKey(key tea.KeyMsg, isRecent bool) (tea.Model, tea.C
 	case "d":
 		if addr, ok := m.list.current(); ok {
 			if isRecent {
-				(&m.store).removeRecent(addr)
+				m.store.removeRecent(addr)
 				m.list = newAddrList(m.store.Recent)
 			} else {
-				(&m.store).removeSaved(addr)
+				m.store.removeSaved(addr)
 				m.list = newAddrList(m.store.Saved)
 			}
 		}
@@ -342,7 +344,7 @@ func (m appModel) handleListKey(key tea.KeyMsg, isRecent bool) (tea.Model, tea.C
 	case "s":
 		if isRecent {
 			if addr, ok := m.list.current(); ok {
-				(&m.store).addSaved(addr)
+				m.store.addSaved(addr)
 				m.note = "saved " + addr
 			}
 		}
@@ -374,7 +376,7 @@ func (m appModel) handleAddressKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			m.addr.err = err.Error()
 		} else {
-			(&m.store).addRecent(addr)
+			m.store.addRecent(addr)
 			m.jobs = []job{{label: addr, address: addr}}
 			m.enterAction(screenAddress)
 		}
@@ -383,7 +385,7 @@ func (m appModel) handleAddressKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			m.addr.err = err.Error()
 		} else {
-			(&m.store).addSaved(addr)
+			m.store.addSaved(addr)
 			m.note = "saved " + addr
 		}
 	case "backspace":
@@ -436,19 +438,25 @@ func (m appModel) startRun(jobs []job, act action) (appModel, tea.Cmd) {
 	m.statusLn = ""
 	m.paused = false
 	m.canceled = false
+	m.runSkipped = 0
+	m.resolveCancel = nil
 	return m.beginJob()
 }
 
 func (m appModel) handleRunningKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case back(key):
-		// Cancel the queue: kill the current child, and let the resulting
-		// finish/resolve message route us to the summary.
+		// Cancel the queue: kill the current child (or abort an in-flight
+		// resolve) and let the resulting message route us to the summary.
 		m.canceled = true
 		if m.runProc != nil {
 			_ = killProcess(m.runProc)
 		}
-	case key.String() == "p" || key.String() == "x":
+		if m.resolveCancel != nil {
+			m.resolveCancel()
+			m.resolveCancel = nil
+		}
+	case key.String() == "p":
 		if pauseSupported && m.runProc != nil {
 			if m.paused {
 				_ = resumeProcess(m.runProc)
@@ -485,7 +493,9 @@ func (m appModel) beginJob() (appModel, tea.Cmd) {
 	}
 	if j.address == "" && j.server != nil {
 		m.statusLn = "Resolving address..."
-		return m, resolveJobCmd(m.fClient, *j.server)
+		ctx, cancel := context.WithTimeout(context.Background(), featuredAPITimeout)
+		m.resolveCancel = cancel
+		return m, resolveJobCmd(ctx, m.fClient, *j.server)
 	}
 	m.markDecryptOut(j.address)
 	m.statusLn = "Starting..."
@@ -508,6 +518,10 @@ func (m appModel) onResolved(msg resolvedMsg) (tea.Model, tea.Cmd) {
 	if m.screen != screenRunning {
 		return m, nil
 	}
+	if m.resolveCancel != nil { // resolve finished; release its context
+		m.resolveCancel()
+		m.resolveCancel = nil
+	}
 	if m.canceled {
 		return m.beginJob() // routes to the summary
 	}
@@ -526,6 +540,12 @@ func (m appModel) onResolved(msg resolvedMsg) (tea.Model, tea.Cmd) {
 func (m appModel) onJobStarted(msg jobStartedMsg) (tea.Model, tea.Cmd) {
 	if m.screen != screenRunning || m.canceled {
 		_ = killProcess(msg.proc)
+		// Nobody will read this child's channel, so drain it to completion
+		// (streamChild closes it after the final message) to free its pipe FDs.
+		go func(c chan tea.Msg) {
+			for range c { //nolint:revive // intentional drain-to-close
+			}
+		}(msg.ch)
 		if m.screen == screenRunning {
 			m.screen = screenDone
 			m.statusLn = ""
@@ -539,6 +559,16 @@ func (m appModel) onJobStarted(msg jobStartedMsg) (tea.Model, tea.Cmd) {
 
 func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 	if m.screen != screenRunning {
+		return m, nil
+	}
+	if m.canceled {
+		// The child was killed on purpose - don't record it as a failure or
+		// persist a "failed" status; just show the summary of what completed.
+		m.runProc = nil
+		m.runCh = nil
+		m.paused = false
+		m.statusLn = ""
+		m.screen = screenDone
 		return m, nil
 	}
 	j := m.jobs[m.jobIdx]
@@ -672,7 +702,7 @@ func hintBar(hints ...hint) string {
 	return colorDim + "  " + strings.Join(parts, " · ") + colorReset + "\n"
 }
 
-func (m appModel) writeRow(b *strings.Builder, selected bool, text string) {
+func writeRow(b *strings.Builder, selected bool, text string) {
 	if selected {
 		b.WriteString(" " + colorCyan + rowCursor + text + colorReset + "\n")
 	} else {
@@ -685,7 +715,7 @@ func (m appModel) menuView() string {
 	b.WriteString(m.crumb())
 	b.WriteString("\n")
 	for i, s := range sections {
-		m.writeRow(&b, i == m.menuCursor, s.label)
+		writeRow(&b, i == m.menuCursor, s.label)
 	}
 	b.WriteString("\n  " + colorDim + sections[m.menuCursor].desc + colorReset + "\n")
 	if m.loadErr != nil {
@@ -703,6 +733,7 @@ func (m appModel) menuView() string {
 func (m appModel) featuredView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
+	m.featured.width = m.width // for row truncation (m is a copy; render-only)
 	b.WriteString(m.featured.View())
 	if s, ok := m.featured.selectedServer(); ok {
 		b.WriteString("\n  " + colorDim + featuredHelp(s) + colorReset + "\n")
@@ -749,10 +780,11 @@ func (m appModel) listView(emptyMsg string, isRecent bool) string {
 		}
 		// Wrap only the box+address in the selection color so the status
 		// keeps its own green/red; append it after.
+		cell := clip(box+" "+addr, m.width-3)
 		if i == m.list.cursor {
-			b.WriteString(" " + colorCyan + rowCursor + box + " " + addr + colorReset)
+			b.WriteString(" " + colorCyan + rowCursor + cell + colorReset)
 		} else {
-			b.WriteString("   " + box + " " + addr)
+			b.WriteString("   " + cell)
 		}
 		if st := m.recentStatusLabel(addr); st != "" {
 			b.WriteString("   " + st)
@@ -800,7 +832,7 @@ func (m appModel) actionView() string {
 	b.WriteString(m.crumb())
 	b.WriteString("\n  " + colorDim + "Action for " + pluralServers(len(m.jobs)) + colorReset + "\n\n")
 	for i, c := range actionChoices {
-		m.writeRow(&b, i == m.actionCursor, c.label)
+		writeRow(&b, i == m.actionCursor, c.label)
 	}
 	b.WriteString("\n  " + colorDim + actionChoices[m.actionCursor].desc + colorReset + "\n\n")
 	b.WriteString(hintBar(
@@ -824,6 +856,8 @@ func (m appModel) runningView() string {
 		b.WriteString("  " + m.truncate(ln) + "\n")
 	}
 	switch {
+	case m.canceled:
+		b.WriteString("  " + colorYellow + "[canceling]" + colorReset + "\n")
 	case m.statusLn != "" && m.paused:
 		b.WriteString("  " + colorYellow + "[paused] " + m.truncate(m.statusLn) + colorReset + "\n")
 	case m.statusLn != "":
@@ -868,7 +902,21 @@ func (m appModel) doneView() string {
 			b.WriteString("        " + colorDim + "decrypted -> " + colorReset + m.truncate(r.outDir) + "\n")
 		}
 	}
-	fmt.Fprintf(&b, "\n  %d/%d succeeded · downloads in the current directory\n\n", ok, len(m.results))
+	fmt.Fprintf(&b, "\n  %d/%d succeeded\n", ok, len(m.results))
+	if m.runSkipped > 0 {
+		fmt.Fprintf(&b, "  %d skipped - needed a download first\n", m.runSkipped)
+	}
+	if ok > 0 {
+		switch {
+		case m.actionFrom == screenDecrypt:
+			// the per-row "decrypted -> <path>" lines above already show where
+		case m.act == actionKeys:
+			b.WriteString("  keys saved to the current directory\n")
+		default:
+			b.WriteString("  downloads in the current directory\n")
+		}
+	}
+	b.WriteString("\n")
 	b.WriteString(hintBar(hint{"any key", gRight + " menu"}))
 	return b.String()
 }
@@ -876,14 +924,20 @@ func (m appModel) doneView() string {
 // truncate clips a line to the current terminal width so a long pack name or
 // path can't wrap and break the repaint. Lines are ANSI-stripped already.
 func (m appModel) truncate(s string) string {
-	limit := m.width - 2 // the two-space indent View adds
-	if limit <= 0 || len(s) <= limit {
+	return clip(s, m.width-2) // the two-space indent View adds
+}
+
+// clip shortens plain (ANSI-free) text to at most width bytes, appending "..."
+// when it must cut. A width <= 0 disables clipping. Measured in bytes, which
+// slightly over-counts multibyte glyphs - acceptable for a wrap guard.
+func clip(s string, width int) string {
+	if width <= 0 || len(s) <= width {
 		return s
 	}
-	if limit < 4 {
-		return s[:limit]
+	if width < 4 {
+		return s[:width]
 	}
-	return s[:limit-3] + "..."
+	return s[:width-3] + "..."
 }
 
 func pluralServers(n int) string {
@@ -959,9 +1013,9 @@ func (m addrListModel) current() (string, bool) {
 	return "", false
 }
 
-// confirmedIdx returns the picked row indices, or the cursor row when nothing
+// confirmedIndices returns the picked row indices, or the cursor row when nothing
 // is explicitly selected.
-func (m addrListModel) confirmedIdx() []int {
+func (m addrListModel) confirmedIndices() []int {
 	if len(m.picked) > 0 {
 		idx := make([]int, 0, len(m.picked))
 		for i := range m.picked {
@@ -976,9 +1030,9 @@ func (m addrListModel) confirmedIdx() []int {
 	return nil
 }
 
-// confirmed maps confirmedIdx through the (string) items.
+// confirmed maps confirmedIndices through the (string) items.
 func (m addrListModel) confirmed() []string {
-	idx := m.confirmedIdx()
+	idx := m.confirmedIndices()
 	out := make([]string, len(idx))
 	for k, i := range idx {
 		out[k] = m.items[i]
@@ -1074,7 +1128,11 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "g":
-		if i, ok := m.currentDownload(); ok && m.dls[i].Address != "" {
+		if i, ok := m.currentDownload(); ok {
+			if m.dls[i].Address == "" {
+				m.note = "no saved address for this entry - press d to forget it"
+				return m, nil
+			}
 			d := m.dls[i]
 			return m.startRun([]job{{label: d.Label, address: d.Address}}, actionDownloadDecrypt)
 		}
@@ -1084,8 +1142,9 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case back(key):
 		m.screen = screenMenu
 	case forward(key):
+		picked := m.list.confirmedIndices()
 		var jobs []job
-		for _, i := range m.list.confirmedIdx() {
+		for _, i := range picked {
 			d, st := m.dls[i], m.dlStates[i]
 			if !st.decryptable() {
 				continue
@@ -1101,7 +1160,9 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.note = "nothing to decrypt - need both packs and a keys file (press g to fetch)"
 			return m, nil
 		}
-		return m.startRun(jobs, actionDownloadDecrypt)
+		nm, cmd := m.startRun(jobs, actionDownloadDecrypt)
+		nm.runSkipped = len(picked) - len(jobs) // surfaced on the done screen
+		return nm, cmd
 	}
 	return m, nil
 }
@@ -1120,16 +1181,16 @@ func (m appModel) decryptView() string {
 		if m.list.picked[i] {
 			box = "[x]"
 		}
-		label := fmt.Sprintf("%-18s", d.Label)
+		cell := clip(box+" "+fmt.Sprintf("%-18s", d.Label), m.width-3)
 		if i == m.list.cursor {
-			b.WriteString(" " + colorCyan + rowCursor + box + " " + label + colorReset)
+			b.WriteString(" " + colorCyan + rowCursor + cell + colorReset)
 		} else {
-			b.WriteString("   " + box + " " + label)
+			b.WriteString("   " + cell)
 		}
 		b.WriteString("  " + decryptBadge(m.dlStates[i]) + "\n")
 	}
 	if i, ok := m.currentDownload(); ok {
-		b.WriteString("\n  " + colorDim + decryptHelp(m.dlStates[i]) + colorReset + "\n")
+		b.WriteString("\n  " + colorDim + decryptHelp(m.dlStates[i], m.dls[i].Address != "") + colorReset + "\n")
 	}
 	if m.note != "" {
 		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
@@ -1154,16 +1215,25 @@ func decryptBadge(st decryptState) string {
 	return colorDim + fmt.Sprintf("%d packs · ", st.packs) + colorReset + keys
 }
 
-func decryptHelp(st decryptState) string {
+func decryptHelp(st decryptState, hasAddr bool) string {
 	switch {
 	case st.decryptable():
 		return fmt.Sprintf("Decrypt %d packs - output lands in a sibling _decrypted folder.", st.packs)
 	case st.packs > 0 && !st.hasKeys:
-		return "Packs are here but the keys file is missing - press g to fetch keys + packs."
+		if hasAddr {
+			return "Packs are here but the keys file is missing - press g to fetch keys + packs."
+		}
+		return "Packs are here but the keys file is missing, and no saved address to fetch from."
 	case st.packs == 0 && st.hasKeys:
-		return "Keys are here but the packs are gone - press g to download them again."
+		if hasAddr {
+			return "Keys are here but the packs are gone - press g to download them again."
+		}
+		return "Keys are here but the packs are gone, and no saved address to re-download."
 	default:
-		return "Nothing on disk anymore - press g to re-download, or d to forget this entry."
+		if hasAddr {
+			return "Nothing on disk anymore - press g to re-download, or d to forget this entry."
+		}
+		return "Nothing on disk anymore - press d to forget this entry."
 	}
 }
 
@@ -1176,6 +1246,7 @@ type tuiModel struct {
 	cursor   int          // position within filtered
 	filter   string       // case-insensitive name substring
 	picked   map[int]bool // chosen server indices (into servers)
+	width    int          // terminal width, for row truncation (set by featuredView)
 }
 
 func newTUIModel(servers []franchise.Server) tuiModel {
@@ -1266,10 +1337,17 @@ func (m tuiModel) View() string {
 	var b strings.Builder
 	if m.filter != "" {
 		b.WriteString("  " + colorDim + "filter: " + m.filter + colorReset + "\n")
+		if hidden := m.hiddenPicks(); hidden > 0 {
+			b.WriteString("  " + colorDim + fmt.Sprintf("%d selected (%d hidden by filter)", len(m.picked), hidden) + colorReset + "\n")
+		}
 	}
 	b.WriteString("\n")
 	if len(m.filtered) == 0 {
-		b.WriteString("   (no servers match)\n")
+		if m.filter == "" {
+			b.WriteString("   " + colorDim + "No featured servers right now - try again later." + colorReset + "\n")
+		} else {
+			b.WriteString("   (no servers match)\n")
+		}
 		return b.String()
 	}
 	for vi, idx := range m.filtered {
@@ -1278,7 +1356,7 @@ func (m tuiModel) View() string {
 		if m.picked[idx] {
 			box = "[x]"
 		}
-		row := fmt.Sprintf("%s %-18s  %-30s  %s", box, s.Name, addressColumn(s), statusFor(s))
+		row := clip(fmt.Sprintf("%s %-18s  %-30s  %s", box, s.Name, addressColumn(s), statusFor(s)), m.width-3)
 		if vi == m.cursor {
 			b.WriteString(" " + colorCyan + rowCursor + row + colorReset + "\n")
 		} else {
@@ -1286,4 +1364,23 @@ func (m tuiModel) View() string {
 		}
 	}
 	return b.String()
+}
+
+// hiddenPicks counts selected servers not visible under the current filter, so
+// the user isn't surprised that a filtered-out pick still runs.
+func (m tuiModel) hiddenPicks() int {
+	if len(m.picked) == 0 {
+		return 0
+	}
+	visible := make(map[int]bool, len(m.filtered))
+	for _, idx := range m.filtered {
+		visible[idx] = true
+	}
+	hidden := 0
+	for idx := range m.picked {
+		if !visible[idx] {
+			hidden++
+		}
+	}
+	return hidden
 }

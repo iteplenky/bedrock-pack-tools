@@ -211,6 +211,9 @@ func streamChild(cmd *exec.Cmd, pr *io.PipeReader, pw *io.PipeWriter, ch chan te
 	_ = pw.Close()
 	<-drained
 	ch <- jobFinishedMsg{err: interpretExit(err)}
+	// Close so a consumer that stopped reading (e.g. after a cancel) can drain
+	// to completion instead of leaking this goroutine on a blocked send.
+	close(ch)
 }
 
 // waitRun pulls the next message off a running job's channel.
@@ -218,11 +221,11 @@ func waitRun(ch chan tea.Msg) tea.Cmd {
 	return func() tea.Msg { return <-ch }
 }
 
-// resolveJobCmd turns a featured row into a host:port off the main loop.
-func resolveJobCmd(client *franchise.Client, s franchise.Server) tea.Cmd {
+// resolveJobCmd turns a featured row into a host:port off the main loop. The
+// context is owned by the model so a cancel keypress can abort the resolve
+// instead of waiting out the timeout.
+func resolveJobCmd(ctx context.Context, client *franchise.Client, s franchise.Server) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), featuredAPITimeout)
-		defer cancel()
 		addr, err := resolveAddress(ctx, client, s)
 		return resolvedMsg{address: addr, err: err}
 	}
