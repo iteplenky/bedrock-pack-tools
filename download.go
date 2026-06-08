@@ -456,12 +456,19 @@ Examples:
 
 	keys := make(map[string]keyEntry)
 	var saved, encrypted, plain int
+	usedDirs := make(map[string]bool)
 
 	for _, pack := range packs {
 		name := sanitizePackName(pack.Name())
 		version := pack.Version()
 		uid := pack.UUID().String()
 		dirName := name + "_v" + version
+		// Two packs can share a Name_vVersion; append the UUID so neither
+		// folder silently overwrites the other.
+		if usedDirs[dirName] {
+			dirName = dirName + "_" + uid[:8]
+		}
+		usedDirs[dirName] = true
 		packDir := filepath.Join(outDir, dirName)
 
 		if pack.Encrypted() || pack.ContentKey() != "" {
