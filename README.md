@@ -15,6 +15,7 @@ Events catalog.
 - **`decrypt`** - turn encrypted packs into plain editable directories
 - **`encrypt`** - package a plain pack into a deployable `.mcpack` + `.mcpack.key`
 - **`featured`** - browse and download from Minecraft's Featured Servers / Live Events catalog
+- **`version`** - print the build version
 - **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `IP:PORT` yourself, pick an action (download, download + decrypt, or keys only), and watch live progress without leaving the menu - pause with `p`, cancel with `esc`, and run again when it's done
 
 **Scope.** Built for researchers, server operators auditing their own
@@ -181,6 +182,15 @@ Each row has five columns - tag, index, name, address, status:
 - `[EXP]` - reached via `experienceId`, not a fixed host; resolved on download via `POST /api/v2.0/join/experience`
 - `[EVT]` - Mojang Gathering / live event; resolved on download via `/api/v1.0/access` + `/api/v1.0/venue/{gatheringId}`
 
+### `version` - print the build version
+
+```bash
+bedrock-pack-tools version   # also -v / --version
+```
+
+Prints the goreleaser-stamped tag for a released binary, or the module
+version (via `debug.ReadBuildInfo`) when built from source.
+
 ## File formats
 
 ### `keys.json`
@@ -240,11 +250,11 @@ the moment you try to join, the API returns nothing and the tool
 prints a clear message. Wait or pick another entry.
 
 **Handshake hangs against a specific server.**
-The tool depends on a patched fork of
-[gophertunnel](https://github.com/iteplenky/gophertunnel/tree/fix/deferred-packet-race)
-pinned via `replace` in `go.mod` to fix a deferred-packet race that
-deadlocks against some servers. If you built from source and stripped
-the replace directive, that's why.
+The tool requires a patched fork of
+[gophertunnel](https://github.com/iteplenky/gophertunnel/tree/fix/deferred-packet-race),
+pinned in `go.mod` (the `github.com/iteplenky/gophertunnel` require line), to
+fix a deferred-packet race that deadlocks against some servers. If you built
+from source and swapped that require back to upstream gophertunnel, that's why.
 
 **Decryption produces garbage.**
 Wrong key, or the encrypted pack was downloaded incompletely (e.g.

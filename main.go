@@ -12,12 +12,14 @@
 //
 // Usage:
 //
+//	bedrock-pack-tools                                  (no command: interactive menu)
 //	bedrock-pack-tools keys     <server:port> [output.json]
-//	bedrock-pack-tools download <server:port> [output-dir]
+//	bedrock-pack-tools download [--decrypt] <server:port> [output-dir]
 //	bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
 //	bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
 //	bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
 //	bedrock-pack-tools featured [download <index> [output-dir]]
+//	bedrock-pack-tools version
 //
 // See the README for the full command reference, the on-disk format
 // of contents.json, and the keys.json schema produced by 'keys'.
