@@ -15,6 +15,7 @@ Events catalog.
 - **`decrypt`** - turn encrypted packs into plain editable directories
 - **`encrypt`** - package a plain pack into a deployable `.mcpack` + `.mcpack.key`
 - **`featured`** - browse and download from Minecraft's Featured Servers / Live Events catalog
+- **interactive menu** - run with no command to pick a server from a list (↑/↓, ↵) and download + decrypt it in one step
 
 **Scope.** Built for researchers, server operators auditing their own
 deployments, and pack authors recovering their own keys. Not for
@@ -59,10 +60,18 @@ the OS user-config directory:
 
 ## Quick start
 
+The easiest way is the interactive menu - run with no arguments, pick a
+server with the arrow keys, and it downloads + decrypts for you:
+
 ```bash
-./bedrock-pack-tools featured                          # browse what's live
-./bedrock-pack-tools download play.example.net:19132   # dump a server's packs
-./bedrock-pack-tools decrypt --all play_example_net_19132_keys.json .
+./bedrock-pack-tools
+```
+
+Or from the command line:
+
+```bash
+./bedrock-pack-tools featured                                   # browse what's live
+./bedrock-pack-tools download --decrypt play.example.net:19132  # dump + decrypt in one step
 ```
 
 ## Commands
@@ -83,7 +92,7 @@ need keys; otherwise `download` does both at once.
 ### `download` - download resource packs
 
 ```bash
-bedrock-pack-tools download [-v] <server:port> [output-dir]
+bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
 ```
 
 Downloads every pack the server ships, plus the keys file. Each pack
@@ -91,11 +100,14 @@ lands in its own `Name_vVersion/` folder. Handles both the
 protocol-level pack transfer and the CDN-URL fallback that some
 servers use.
 
+`-d` / `--decrypt` decrypts the packs right after downloading, so you
+get ready-to-use folders in one step.
+
 `-v` / `--verbose` prints all packet IDs for debugging handshake
 issues.
 
-The downloaded packs are still encrypted; the tool prints the exact
-`decrypt --all` command to run next.
+Without `--decrypt` the downloaded packs are still encrypted; the tool
+prints the exact `decrypt --all` command to run next.
 
 ### `decrypt` - decrypt resource packs
 

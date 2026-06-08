@@ -59,6 +59,13 @@ func dialTimeout(fallback time.Duration) time.Duration {
 
 func main() {
 	if len(os.Args) < 2 {
+		// No command on a real terminal: open the interactive menu.
+		if isInteractive() {
+			if err := runTUI(); err != nil {
+				os.Exit(handleErr(os.Stderr, err))
+			}
+			return
+		}
 		printUsage()
 		os.Exit(1)
 	}
@@ -123,8 +130,9 @@ func printUsage() {
 	fmt.Println(`bedrock-pack-tools - dump, download, decrypt & encrypt Minecraft Bedrock resource packs
 
 Usage:
+  bedrock-pack-tools                                  (no command: interactive menu)
   bedrock-pack-tools keys     <server:port> [output.json]
-  bedrock-pack-tools download <server:port> [output-dir]
+  bedrock-pack-tools download [--decrypt] <server:port> [output-dir]
   bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
   bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
   bedrock-pack-tools encrypt  [--key-out PATH] <pack-dir> [key] [output.mcpack]
@@ -140,8 +148,8 @@ Commands:
             Requires Xbox Live authentication (device code flow, token cached).
 
   download  Connect to a Bedrock server, download all resource packs, and extract
-            them to disk. Also saves encryption keys. Packs are still encrypted
-            on disk - use 'decrypt' afterwards.
+            them to disk. Also saves encryption keys. Packs are encrypted on disk;
+            add --decrypt to decrypt in the same step, or run 'decrypt' afterwards.
 
   decrypt   Decrypt an encrypted resource pack using a 32-character AES key,
             or batch-decrypt all packs matched by a keys.json file.

@@ -313,32 +313,34 @@ func isZipFile(path string) bool {
 }
 
 func runDownload(args []string) error {
-	var verbose bool
+	var verbose, decrypt bool
 	fs := newFlagSet()
 	fs.Bool(&verbose, "-v", "--verbose")
+	fs.Bool(&decrypt, "-d", "--decrypt")
 	args, err := fs.parse(args)
 	if err != nil {
 		return err
 	}
 
 	if len(args) < 1 {
-		fmt.Println(`Usage: bedrock-pack-tools download [-v] <server:port> [output-dir]
+		fmt.Println(`Usage: bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
 
 Connect to a Minecraft Bedrock server, download all resource packs, and
 extract them to disk. Also saves encryption keys.
 
 Flags:
   -v, --verbose   Show all packet IDs for debugging
+  -d, --decrypt   Decrypt the packs right after downloading (one step)
 
 The output directory will contain one folder per pack: Name_vVersion/
 A keys file (server_keys.json) is also saved alongside.
 
-The downloaded packs are still encrypted. To get editable directories,
-run: bedrock-pack-tools decrypt --all <keys.json> <output-dir>
+Without --decrypt the downloaded packs are still encrypted; turn them into
+editable directories with: bedrock-pack-tools decrypt --all <keys.json> <output-dir>
 
 Examples:
   bedrock-pack-tools download <server:port>
-  bedrock-pack-tools download <server:port> ./packs/`)
+  bedrock-pack-tools download --decrypt <server:port> ./packs/`)
 		return errUsage
 	}
 
@@ -503,6 +505,10 @@ Examples:
 			fmt.Fprintf(os.Stderr, "  Warning: could not save keys: %v\n", err)
 		}
 		fmt.Printf("  Keys: %d -> %s\n", len(keys), keysFile)
+		if decrypt {
+			fmt.Println()
+			return decryptAll(keysFile, outDir, "")
+		}
 		fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 	}
 	fmt.Println()
