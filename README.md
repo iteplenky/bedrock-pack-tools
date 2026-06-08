@@ -15,7 +15,7 @@ Events catalog.
 - **`decrypt`** - turn encrypted packs into plain editable directories
 - **`encrypt`** - package a plain pack into a deployable `.mcpack` + `.mcpack.key`
 - **`featured`** - browse and download from Minecraft's Featured Servers / Live Events catalog
-- **interactive menu** - run with no command to pick a server from a list (↑/↓, ↵) and download + decrypt it in one step
+- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `IP:PORT` yourself, then download + decrypt in one step
 
 **Scope.** Built for researchers, server operators auditing their own
 deployments, and pack authors recovering their own keys. Not for
