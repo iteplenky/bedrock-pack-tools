@@ -401,6 +401,26 @@ Examples:
 		keyCount := tracker.keys.count()
 		cdnCount := int(tracker.cdnDownloaded.Load())
 
+		tracker.mu.Lock()
+		total := tracker.totalPacks
+		tracker.mu.Unlock()
+
+		// Every announced pack arrived over CDN before the server closed the
+		// connection - that's a complete download, not a partial one. Some
+		// servers ship every pack by URL and never finish the spawn handshake
+		// for a non-playing client.
+		if total > 0 && cdnCount >= total {
+			fmt.Printf("\n  Downloaded %d/%d packs via CDN.\n", cdnCount, total)
+			if keyCount > 0 {
+				fmt.Printf("  Keys: %d -> %s\n", keyCount, keysFile)
+				fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+			} else {
+				fmt.Println("  Packs are unencrypted - ready to use, no decryption needed.")
+			}
+			fmt.Println()
+			return nil
+		}
+
 		if cdnCount > 0 {
 			fmt.Printf("\n  Connection closed after %.1fs, but %d packs downloaded via CDN\n", elapsed.Seconds(), cdnCount)
 			if keyCount > 0 {
