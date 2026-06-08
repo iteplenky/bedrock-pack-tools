@@ -101,6 +101,9 @@ type gatheringsEnv struct {
 	ServiceURI *url.URL
 }
 
+// gatheringsEnv must satisfy service.Environment so disc.Environment can decode it.
+var _ service.Environment = (*gatheringsEnv)(nil)
+
 func (g *gatheringsEnv) ServiceName() string { return "gatherings" }
 
 func (g *gatheringsEnv) UnmarshalJSON(b []byte) error {

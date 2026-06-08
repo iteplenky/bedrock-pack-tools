@@ -82,16 +82,16 @@ type packJob struct {
 }
 
 // defaultDecryptOutBase picks the sibling output dir for --all (avoids
-// colliding with a real pack named "decrypted" inside cacheDir).
-func defaultDecryptOutBase(cacheDir string) string {
-	trimmed := strings.TrimRight(cacheDir, "/\\")
+// colliding with a real pack named "decrypted" inside packsDir).
+func defaultDecryptOutBase(packsDir string) string {
+	trimmed := strings.TrimRight(packsDir, "/\\")
 	if trimmed == "" || trimmed == "." {
 		return "decrypted"
 	}
 	return trimmed + "_decrypted"
 }
 
-func decryptAll(keysFile, cacheDir, outBase string) error {
+func decryptAll(keysFile, packsDir, outBase string) error {
 	data, err := os.ReadFile(keysFile)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", keysFile, err)
@@ -102,12 +102,12 @@ func decryptAll(keysFile, cacheDir, outBase string) error {
 	}
 
 	if outBase == "" {
-		outBase = defaultDecryptOutBase(cacheDir)
+		outBase = defaultDecryptOutBase(packsDir)
 	}
 
-	entries, err := os.ReadDir(cacheDir)
+	entries, err := os.ReadDir(packsDir)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", cacheDir, err)
+		return fmt.Errorf("read %s: %w", packsDir, err)
 	}
 
 	var jobs []packJob
@@ -115,7 +115,7 @@ func decryptAll(keysFile, cacheDir, outBase string) error {
 		if !entry.IsDir() {
 			continue
 		}
-		packDir := filepath.Join(cacheDir, entry.Name())
+		packDir := filepath.Join(packsDir, entry.Name())
 
 		if _, err := os.Stat(filepath.Join(packDir, contentsJSON)); err != nil {
 			continue
@@ -246,6 +246,25 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 		return packStats{}, fmt.Errorf("write contents.json: %w", err)
 	}
 
+	stats := decryptPackFiles(packDir, outDir, contents.Content)
+	stats.copied++ // contents.json itself, written above
+
+	// manifest.json and pack_icon.png are plain and some packs omit them
+	// from contents.json - copy them across so the decrypted pack loads.
+	for _, name := range []string{manifestJSON, packIconPNG} {
+		if err := copyIfMissing(packDir, outDir, name); err != nil {
+			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, name, err)
+			stats.errors++
+		}
+	}
+
+	return stats, nil
+}
+
+// decryptPackFiles decrypts or copies every entry in the pack's
+// contents.json, fanning out across workers. contents.json itself is
+// skipped - the caller writes it.
+func decryptPackFiles(packDir, outDir string, entries []contentsEntry) packStats {
 	type fileJob struct {
 		entry   contentsEntry
 		srcPath string
@@ -253,7 +272,7 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 	}
 
 	var jobs []fileJob
-	for _, entry := range contents.Content {
+	for _, entry := range entries {
 		if entry.Path == contentsJSON {
 			continue
 		}
@@ -290,7 +309,7 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 		close(resultCh)
 	}()
 
-	stats := packStats{copied: 1} // contents.json
+	var stats packStats
 	for r := range resultCh {
 		if r.err != nil {
 			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, r.path, r.err)
@@ -301,17 +320,7 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 			stats.copied++
 		}
 	}
-
-	// manifest.json and pack_icon.png are plain and some packs omit them
-	// from contents.json - copy them across so the decrypted pack loads.
-	for _, name := range []string{manifestJSON, packIconPNG} {
-		if err := copyIfMissing(packDir, outDir, name); err != nil {
-			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, name, err)
-			stats.errors++
-		}
-	}
-
-	return stats, nil
+	return stats
 }
 
 func processFile(entry contentsEntry, srcPath, dstPath string) (decrypted bool, err error) {
@@ -334,6 +343,8 @@ func processFile(entry contentsEntry, srcPath, dstPath string) (decrypted bool, 
 		return false, err
 	}
 
+	// manifest.json stays plaintext - the client parses it before it has
+	// the content key - so copy it as-is even if an entry lists a key.
 	if entry.Key == "" || entry.Path == manifestJSON {
 		return false, os.WriteFile(dstPath, raw, 0644)
 	}

@@ -60,12 +60,19 @@ func loadOrCreateDeviceID() string {
 // first-run invocations can't leave a truncated file. 0600 perms
 // mirror the token caches.
 func writeDeviceIDAtomic(path, id string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".device_id-*.tmp")
+	return atomicWriteFile(path, ".device_id-*.tmp", []byte(id+"\n"), 0600)
+}
+
+// atomicWriteFile writes data to a temp file beside dst (named via
+// pattern), gives it perm, then renames it onto dst - so a concurrent
+// reader never sees a half-written file. The temp is removed on any failure.
+func atomicWriteFile(dst, pattern string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(dst), pattern)
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.Write([]byte(id + "\n")); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return err
@@ -74,11 +81,11 @@ func writeDeviceIDAtomic(path, id string) error {
 		os.Remove(tmpName)
 		return err
 	}
-	if err := os.Chmod(tmpName, 0600); err != nil {
+	if err := os.Chmod(tmpName, perm); err != nil {
 		os.Remove(tmpName)
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := os.Rename(tmpName, dst); err != nil {
 		os.Remove(tmpName)
 		return err
 	}

@@ -73,7 +73,7 @@ func venue(ctx context.Context, gatheringsURI *url.URL, authHeader, gatheringID 
 	}
 	type venueResult struct {
 		Venue struct {
-			ServerIpAddress string `json:"serverIpAddress"`
+			ServerIPAddress string `json:"serverIpAddress"`
 			ServerPort      int    `json:"serverPort"`
 		} `json:"venue"`
 	}
@@ -81,10 +81,10 @@ func venue(ctx context.Context, gatheringsURI *url.URL, authHeader, gatheringID 
 	if err != nil {
 		return "", 0, err
 	}
-	if env.Result.Venue.ServerIpAddress == "" {
+	if env.Result.Venue.ServerIPAddress == "" {
 		// Include raw body so a future Mojang transport change surfaces
 		// readably rather than as a silent "no address".
 		return "", 0, fmt.Errorf("venue response has no serverIpAddress (raw: %s)", previewBody(body))
 	}
-	return env.Result.Venue.ServerIpAddress, env.Result.Venue.ServerPort, nil
+	return env.Result.Venue.ServerIPAddress, env.Result.Venue.ServerPort, nil
 }

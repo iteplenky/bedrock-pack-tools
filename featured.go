@@ -143,9 +143,7 @@ func featuredDownload(args []string) error {
 
 	fmt.Printf("\n  [->] %s  ->  %s\n", s.Name, address)
 
-	downloadArgs := []string{address}
-	downloadArgs = append(downloadArgs, args[1:]...)
-	return runDownload(downloadArgs)
+	return runDownload(append([]string{address}, args[1:]...))
 }
 
 // resolveAddress turns a Server into a host:port. Partner-direct
@@ -338,9 +336,7 @@ func tagFor(s franchise.Server) (tag, color string) {
 
 func statusFor(s franchise.Server) string {
 	switch s.Kind {
-	case franchise.KindGathering:
-		return "resolve on download"
-	case franchise.KindPartnerExperience:
+	case franchise.KindGathering, franchise.KindPartnerExperience:
 		return "resolve on download"
 	}
 	if !s.Online {

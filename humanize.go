@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -260,7 +261,7 @@ func classifyTLS(err error) (diagnostic, bool) {
 	var ua x509.UnknownAuthorityError
 	if errors.As(err, &ua) {
 		return diagnostic{
-			headline: "TLS handshake failed for " + nonEmpty(host, "the upstream service"),
+			headline: "TLS handshake failed for " + cmp.Or(host, "the upstream service"),
 			body:     "The server's certificate was signed by a CA your system doesn't trust. The most common cause is a corporate HTTPS-inspecting proxy.",
 			causes: []string{
 				"Corporate / school HTTPS-inspecting proxy (Zscaler, Netskope, Palo Alto)",
@@ -274,22 +275,22 @@ func classifyTLS(err error) (diagnostic, bool) {
 	if errors.As(err, &ci) {
 		if ci.Reason == x509.Expired {
 			return diagnostic{
-				headline: "TLS certificate looks expired for " + nonEmpty(host, "the upstream service"),
+				headline: "TLS certificate looks expired for " + cmp.Or(host, "the upstream service"),
 				body:     "The server's cert is past its validity window from your machine's point of view. Most often that's a wrong system clock, not an actual cert problem.",
 				fix:      "Check your system clock. On macOS: `sudo sntp -sS time.apple.com`. On Linux: `timedatectl status`.",
 			}, true
 		}
 		return diagnostic{
-			headline: "TLS certificate is invalid for " + nonEmpty(host, "the upstream service"),
+			headline: "TLS certificate is invalid for " + cmp.Or(host, "the upstream service"),
 			body:     "The cert failed validation: " + ci.Error() + ".",
-			fix:      "Confirm the URL and system clock. If the issue persists, capture the cert with `openssl s_client -connect " + nonEmpty(host, "<host>") + ":443` for diagnostics.",
+			fix:      "Confirm the URL and system clock. If the issue persists, capture the cert with `openssl s_client -connect " + cmp.Or(host, "<host>") + ":443` for diagnostics.",
 		}, true
 	}
 	// Substring fallback for stringified TLS errors.
 	low := strings.ToLower(err.Error())
 	if strings.Contains(low, "tls: handshake failure") || strings.Contains(low, "tls: bad certificate") {
 		return diagnostic{
-			headline: "TLS handshake failed for " + nonEmpty(host, "the upstream service"),
+			headline: "TLS handshake failed for " + cmp.Or(host, "the upstream service"),
 			body:     "The TLS layer rejected the connection before getting to the application protocol.",
 			fix:      "Often a corporate HTTPS proxy or an outdated CA bundle. Try the command on a different network to isolate the cause.",
 		}, true
@@ -312,7 +313,7 @@ func classifyNet(err error) (diagnostic, bool) {
 	if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
 		host := extractHost(err)
 		return diagnostic{
-			headline: "No route to " + nonEmpty(host, "the upstream service"),
+			headline: "No route to " + cmp.Or(host, "the upstream service"),
 			body:     "Your machine has no route at all to reach that IP. Often a wifi or VPN that's only half-up.",
 			fix:      "Toggle wifi / VPN. If you're on a corporate VPN, confirm split-tunnel rules let Microsoft endpoints out.",
 		}, true
@@ -337,14 +338,14 @@ func classifyNet(err error) (diagnostic, bool) {
 // dnsDiag is shared by the typed (net.DNSError) and substring DNS paths.
 func dnsDiag(host string) diagnostic {
 	return diagnostic{
-		headline: "DNS lookup failed for " + nonEmpty(host, "the upstream host"),
+		headline: "DNS lookup failed for " + cmp.Or(host, "the upstream host"),
 		body:     "Your system couldn't resolve the hostname to an IP. The tool never got far enough to make a network request.",
 		causes: []string{
 			"Captive portal (hotel/cafe wifi that hasn't been signed into yet)",
 			"DNS server outage or misconfigured resolver",
 			"VPN with broken split-DNS",
 		},
-		fix: "Try `nslookup " + nonEmpty(host, "device.auth.xboxlive.com") + "`.\n" +
+		fix: "Try `nslookup " + cmp.Or(host, "device.auth.xboxlive.com") + "`.\n" +
 			"If it also fails, switch DNS to 1.1.1.1 or 8.8.8.8 and retry.",
 	}
 }
@@ -361,7 +362,7 @@ func refusedDiag(err error) diagnostic {
 		}
 	}
 	return diagnostic{
-		headline: "Connection refused by " + nonEmpty(host, "the upstream service"),
+		headline: "Connection refused by " + cmp.Or(host, "the upstream service"),
 		body:     "The host is reachable but actively refused our connection. For Microsoft / Mojang services this is almost always a temporary outage on their side.",
 		fix:      "Wait a few minutes and retry. If it persists for more than ~30 min, check https://xnotify.xboxlive.com/servicestatus.",
 	}
@@ -449,7 +450,7 @@ func timeoutDiag(err error) diagnostic {
 	}
 	// Unknown host: skip the curl-against-xboxlive hint - it could be
 	// a CDN or third party where the Xbox-VPN advice would be wrong.
-	target := nonEmpty(host, "the upstream service")
+	target := cmp.Or(host, "the upstream service")
 	return diagnostic{
 		headline: "Couldn't reach " + target,
 		body:     "The request timed out without reaching the server.",
@@ -574,13 +575,6 @@ func firstMatch(re *regexp.Regexp, msg string) string {
 		return ""
 	}
 	return m[1]
-}
-
-func nonEmpty(a, fallback string) string {
-	if a == "" {
-		return fallback
-	}
-	return a
 }
 
 func containsAny(haystack string, needles ...string) bool {

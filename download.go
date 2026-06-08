@@ -210,7 +210,6 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 			if nicer != packDir {
 				if _, statErr := os.Stat(nicer); os.IsNotExist(statErr) {
 					if renameErr := os.Rename(packDir, nicer); renameErr == nil {
-						packDir = nicer
 						dirName = filepath.Base(nicer)
 					}
 				}

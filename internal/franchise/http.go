@@ -102,12 +102,12 @@ func decodeAPIError(status int, body []byte) error {
 
 // previewBody truncates a response body to 240 bytes for error messages.
 func previewBody(body []byte) string {
-	const max = 240
+	const maxLen = 240
 	s := string(body)
-	if len(s) <= max {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max] + "..."
+	return s[:maxLen] + "..."
 }
 
 // decodeAPI unmarshals a franchise body into T with a uniform error.

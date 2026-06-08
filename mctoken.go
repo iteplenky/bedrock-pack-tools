@@ -61,31 +61,8 @@ func saveMCToken(t *service.Token) {
 		fmt.Fprintf(os.Stderr, "Warning: could not marshal mctoken: %v\n", err)
 		return
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".mctoken-*.tmp")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not create mctoken temp: %v\n", err)
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		fmt.Fprintf(os.Stderr, "Warning: could not write mctoken temp: %v\n", err)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		fmt.Fprintf(os.Stderr, "Warning: could not close mctoken temp: %v\n", err)
-		return
-	}
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		os.Remove(tmpName)
-		fmt.Fprintf(os.Stderr, "Warning: could not chmod mctoken temp: %v\n", err)
-		return
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		fmt.Fprintf(os.Stderr, "Warning: could not rename mctoken cache: %v\n", err)
+	if err := atomicWriteFile(path, ".mctoken-*.tmp", data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not save mctoken cache: %v\n", err)
 	}
 }
 

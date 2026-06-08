@@ -34,7 +34,7 @@ func startSpinner(label string) *spinner {
 func (s *spinner) run(label string) {
 	ticker := time.NewTicker(spinnerInterval)
 	defer ticker.Stop()
-	i := 1
+	i := 1 // frame 0 was already printed by startSpinner
 	for {
 		select {
 		case <-s.done:
