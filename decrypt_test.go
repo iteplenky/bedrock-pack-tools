@@ -221,9 +221,9 @@ func TestCopyPackIcon(t *testing.T) {
 
 	os.WriteFile(filepath.Join(srcDir, "pack_icon.png"), []byte("PNG_DATA"), 0644)
 
-	err := copyPackIcon(srcDir, dstDir)
+	err := copyIfMissing(srcDir, dstDir, packIconPNG)
 	if err != nil {
-		t.Fatalf("copyPackIcon error: %v", err)
+		t.Fatalf("copyIfMissing error: %v", err)
 	}
 
 	got, _ := os.ReadFile(filepath.Join(dstDir, "pack_icon.png"))
@@ -242,7 +242,7 @@ func TestCopyPackIcon_AlreadyExists(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "pack_icon.png"), []byte("NEW"), 0644)
 	os.WriteFile(filepath.Join(dstDir, "pack_icon.png"), []byte("OLD"), 0644)
 
-	copyPackIcon(srcDir, dstDir)
+	copyIfMissing(srcDir, dstDir, packIconPNG)
 
 	got, _ := os.ReadFile(filepath.Join(dstDir, "pack_icon.png"))
 	if string(got) != "OLD" {
@@ -252,8 +252,27 @@ func TestCopyPackIcon_AlreadyExists(t *testing.T) {
 
 func TestCopyPackIcon_NoIcon(t *testing.T) {
 	tmp := t.TempDir()
-	err := copyPackIcon(filepath.Join(tmp, "src"), filepath.Join(tmp, "dst"))
+	err := copyIfMissing(filepath.Join(tmp, "src"), filepath.Join(tmp, "dst"), packIconPNG)
 	if err != nil {
 		t.Errorf("expected nil error when no icon exists, got %v", err)
+	}
+}
+
+// TestCopyIfMissing_Manifest: a manifest absent from contents.json must
+// still land in the decrypted pack so it stays loadable.
+func TestCopyIfMissing_Manifest(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	dst := filepath.Join(tmp, "dst")
+	os.MkdirAll(src, 0755)
+	os.MkdirAll(dst, 0755)
+	os.WriteFile(filepath.Join(src, manifestJSON), []byte(`{"header":{}}`), 0644)
+
+	if err := copyIfMissing(src, dst, manifestJSON); err != nil {
+		t.Fatalf("copyIfMissing: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dst, manifestJSON))
+	if string(got) != `{"header":{}}` {
+		t.Errorf("manifest not copied: got %q", got)
 	}
 }

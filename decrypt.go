@@ -302,9 +302,13 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 		}
 	}
 
-	if err := copyPackIcon(packDir, outDir); err != nil {
-		fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, packIconPNG, err)
-		stats.errors++
+	// manifest.json and pack_icon.png are plain and some packs omit them
+	// from contents.json - copy them across so the decrypted pack loads.
+	for _, name := range []string{manifestJSON, packIconPNG} {
+		if err := copyIfMissing(packDir, outDir, name); err != nil {
+			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, name, err)
+			stats.errors++
+		}
 	}
 
 	return stats, nil
@@ -341,18 +345,20 @@ func processFile(entry contentsEntry, srcPath, dstPath string) (decrypted bool, 
 	return true, os.WriteFile(dstPath, dec, 0644)
 }
 
-func copyPackIcon(packDir, outDir string) error {
-	iconSrc := filepath.Join(packDir, packIconPNG)
-	iconDst := filepath.Join(outDir, packIconPNG)
-	if _, err := os.Stat(iconSrc); os.IsNotExist(err) {
+// copyIfMissing copies a plain pack file (manifest / icon) from packDir to
+// outDir when it exists there but wasn't already written from contents.json.
+func copyIfMissing(packDir, outDir, name string) error {
+	src := filepath.Join(packDir, name)
+	dst := filepath.Join(outDir, name)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	if _, err := os.Stat(iconDst); err == nil {
+	if _, err := os.Stat(dst); err == nil {
 		return nil
 	}
-	return copyFile(iconSrc, iconDst)
+	return copyFile(src, dst)
 }
 
 func copyFile(src, dst string) (err error) {
