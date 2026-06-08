@@ -12,6 +12,12 @@ import (
 
 const tokenFileName = ".xbox_token.json"
 
+// quietAuthEnv suppresses the "using cached Xbox token" line. The
+// interactive menu sets it (and passes it to its child processes) so the
+// note doesn't linger on the main screen after the alt-screen exits. The
+// device-code prompt still prints - that one the user must see.
+const quietAuthEnv = "BPT_QUIET_AUTH"
+
 // tokenPath returns the on-disk cache path for the Xbox token. Errors
 // instead of falling back to cwd - the refresh token is the most
 // sensitive artifact and must never leak into a shared working dir.
@@ -69,7 +75,7 @@ var tokenSourceAnnounced bool
 
 func getTokenSource() (oauth2.TokenSource, error) {
 	if t := loadToken(); t != nil {
-		if !tokenSourceAnnounced {
+		if !tokenSourceAnnounced && os.Getenv(quietAuthEnv) == "" {
 			fmt.Println("  Auth: using cached Xbox token")
 			tokenSourceAnnounced = true
 		}

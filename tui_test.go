@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,7 +38,7 @@ func TestTuiModel_EnterPicksCursorWhenNoneSelected(t *testing.T) {
 }
 
 func TestAppModel_MenuToAddressAndBack(t *testing.T) {
-	var m tea.Model = appModel{screen: screenMenu, menuCursor: 1} // "Enter a server address"
+	var m tea.Model = appModel{screen: screenMenu, menuCursor: 4} // "Enter a server address"
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.(appModel).screen != screenAddress {
 		t.Fatalf("enter on address row should open screenAddress, got %d", m.(appModel).screen)
@@ -47,20 +49,87 @@ func TestAppModel_MenuToAddressAndBack(t *testing.T) {
 	}
 }
 
-func TestAppModel_AddressValidation(t *testing.T) {
-	// Invalid -> stays, sets error, no quit.
-	var m tea.Model = appModel{screen: screenAddress, addr: addrModel{value: "nope"}}
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	am := m.(appModel)
-	if am.doAddress != "" || am.addr.err == "" || am.screen != screenAddress || cmd != nil {
-		t.Fatalf("invalid address: doAddress=%q err=%q screen=%d cmd=%v", am.doAddress, am.addr.err, am.screen, cmd)
+func TestAppModel_RightArrowDrillsInLeftArrowBacks(t *testing.T) {
+	// Right arrow opens the highlighted section; left arrow returns.
+	var m tea.Model = appModel{screen: screenMenu, menuCursor: 1} // "Saved servers"
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if m.(appModel).screen != screenSaved {
+		t.Fatalf("right arrow should open screenSaved, got %d", m.(appModel).screen)
 	}
-	// Valid -> sets doAddress and quits.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if m.(appModel).screen != screenMenu {
+		t.Fatalf("left arrow should return to the menu, got %d", m.(appModel).screen)
+	}
+}
+
+func TestAppModel_RecentSaveAndDelete(t *testing.T) {
+	// "s" on a recent row saves it; "d" forgets it. Store path is empty, so
+	// nothing touches disk.
+	m := appModel{screen: screenRecent, store: store{Recent: []string{"a:1", "b:2"}}}
+	m.list = newAddrList(m.store.Recent)
+	m.list.cursor = 1 // "b:2"
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	am := tm.(appModel)
+	if len(am.store.Saved) != 1 || am.store.Saved[0] != "b:2" {
+		t.Fatalf("save: store.Saved = %v, want [b:2]", am.store.Saved)
+	}
+	tm, _ = am.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	am = tm.(appModel)
+	if len(am.store.Recent) != 1 || am.store.Recent[0] != "a:1" {
+		t.Fatalf("delete: store.Recent = %v, want [a:1]", am.store.Recent)
+	}
+}
+
+func TestAppModel_SavedEnterQueuesJobs(t *testing.T) {
+	m := appModel{screen: screenSaved, store: store{Saved: []string{"a:1", "b:2"}}}
+	m.list = newAddrList(m.store.Saved)
+	m.list.picked = map[int]bool{0: true, 1: true}
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.screen != screenAction || len(am.jobs) != 2 || am.jobs[0].address != "a:1" {
+		t.Fatalf("saved enter: screen=%d jobs=%+v", am.screen, am.jobs)
+	}
+	// esc from the action picker returns to the saved list.
+	tm, _ = am.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if tm.(appModel).screen != screenSaved {
+		t.Fatalf("esc on action should return to screenSaved, got %d", tm.(appModel).screen)
+	}
+}
+
+func TestAppModel_AddressToActionPicker(t *testing.T) {
+	// Invalid address -> stays on the field with an error, no job queued.
+	var m tea.Model = appModel{screen: screenAddress, addr: addrModel{value: "nope"}}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if am := m.(appModel); am.screen != screenAddress || am.addr.err == "" || len(am.jobs) != 0 {
+		t.Fatalf("invalid address: screen=%d err=%q jobs=%d", am.screen, am.addr.err, len(am.jobs))
+	}
+	// Valid address -> one job queued, action picker opens.
 	m = appModel{screen: screenAddress, addr: addrModel{value: "play.example.net:19132"}}
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	am = m.(appModel)
-	if am.doAddress != "play.example.net:19132" || cmd == nil {
-		t.Fatalf("valid address: doAddress=%q cmd=%v", am.doAddress, cmd)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := m.(appModel)
+	if am.screen != screenAction || len(am.jobs) != 1 || am.jobs[0].address != "play.example.net:19132" {
+		t.Fatalf("valid address: screen=%d jobs=%+v", am.screen, am.jobs)
+	}
+	// esc from the action picker returns to the address field.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.(appModel).screen != screenAddress {
+		t.Fatalf("esc on action picker should return to %d, got %d", screenAddress, m.(appModel).screen)
+	}
+}
+
+func TestAppModel_ActionPickerNavigates(t *testing.T) {
+	// down twice lands on the third choice ("Keys only"); we stop short of
+	// enter, which would spawn the child process.
+	var m tea.Model = appModel{screen: screenAction, jobs: []job{{label: "x", address: "x:1"}}}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown}) // clamps at the last row
+	am := m.(appModel)
+	if am.actionCursor != len(actionChoices)-1 || actionChoices[am.actionCursor].value != actionKeys {
+		t.Fatalf("cursor = %d, want last row mapping to actionKeys", am.actionCursor)
 	}
 }
 
@@ -71,8 +140,23 @@ func TestAppModel_CatalogLoadedOpensFeatured(t *testing.T) {
 	if am.screen != screenFeatured {
 		t.Fatalf("catalogLoadedMsg should open screenFeatured, got %d", am.screen)
 	}
-	if len(am.featured.servers) != 1 {
-		t.Fatalf("featured not populated: %d servers", len(am.featured.servers))
+	if len(am.featured.servers) != 1 || am.fServers == nil {
+		t.Fatalf("featured/catalog not populated: %d servers", len(am.featured.servers))
+	}
+}
+
+func TestAppModel_FeaturedEnterQueuesJobs(t *testing.T) {
+	servers := []franchise.Server{{Name: "alpha"}, {Name: "bravo"}}
+	m := appModel{screen: screenFeatured, fServers: servers, featured: newTUIModel(servers)}
+	m.featured.picked = map[int]bool{0: true, 1: true}
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.screen != screenAction || len(am.jobs) != 2 {
+		t.Fatalf("featured enter: screen=%d jobs=%d, want action + 2 jobs", am.screen, len(am.jobs))
+	}
+	if am.jobs[0].server == nil || am.jobs[0].label != "alpha" {
+		t.Fatalf("job not wired to a server: %+v", am.jobs[0])
 	}
 }
 
@@ -81,6 +165,101 @@ func TestAppModel_FeaturedEscBacksToMenu(t *testing.T) {
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if m.(appModel).screen != screenMenu || cmd != nil {
 		t.Fatal("esc on featured (no filter) should return to menu, not quit")
+	}
+}
+
+func TestAppModel_DoneKeyReturnsToMenu(t *testing.T) {
+	m := appModel{
+		screen:  screenDone,
+		jobs:    []job{{label: "x"}},
+		results: []jobResult{{label: "x"}},
+	}
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.screen != screenMenu || am.jobs != nil || am.results != nil {
+		t.Fatalf("done key should reset to menu, got screen=%d jobs=%d results=%d", am.screen, len(am.jobs), len(am.results))
+	}
+}
+
+func TestAppModel_JobFinishedAdvancesAndSummarizes(t *testing.T) {
+	// Two ready jobs; finishing both lands on the summary with two results.
+	m := appModel{
+		screen: screenRunning,
+		jobs:   []job{{label: "a", address: "a:1"}, {label: "b", address: "b:1"}},
+		jobIdx: 0,
+	}
+	var tm tea.Model = m
+	tm, cmd := tm.Update(jobFinishedMsg{err: nil})
+	am := tm.(appModel)
+	if am.jobIdx != 1 || len(am.results) != 1 || cmd == nil {
+		t.Fatalf("first finish: jobIdx=%d results=%d cmd=%v (want a start cmd for job 2)", am.jobIdx, len(am.results), cmd)
+	}
+	tm, _ = am.Update(jobFinishedMsg{err: nil})
+	am = tm.(appModel)
+	if am.screen != screenDone || len(am.results) != 2 {
+		t.Fatalf("second finish: screen=%d results=%d, want done + 2", am.screen, len(am.results))
+	}
+}
+
+func TestInspectDownload(t *testing.T) {
+	dir := t.TempDir()
+	// One encrypted pack folder + a keys file.
+	packDir := filepath.Join(dir, "Pack_v1")
+	if err := os.MkdirAll(packDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, contentsJSON), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keys := filepath.Join(dir, "srv_keys.json")
+	if err := os.WriteFile(keys, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st := inspectDownload(download{Dir: dir, KeysFile: keys})
+	if st.packs != 1 || !st.hasKeys || !st.decryptable() {
+		t.Fatalf("inspect = %+v, want 1 pack + keys + decryptable", st)
+	}
+	// No keys -> not decryptable.
+	st = inspectDownload(download{Dir: dir, KeysFile: filepath.Join(dir, "missing.json")})
+	if st.packs != 1 || st.hasKeys || st.decryptable() {
+		t.Fatalf("inspect (no keys) = %+v, want 1 pack, no keys, not decryptable", st)
+	}
+}
+
+func TestAppModel_DecryptForwardBuildsDecryptJob(t *testing.T) {
+	d := download{Label: "srv", Dir: "/tmp/x", KeysFile: "/tmp/x/srv_keys.json"}
+	m := appModel{
+		screen:   screenDecrypt,
+		dls:      []download{d},
+		dlStates: []decryptState{{packs: 2, hasKeys: true}},
+		list:     newAddrList([]string{d.Label}),
+	}
+	var tm tea.Model = m
+	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.screen != screenRunning || len(am.jobs) != 1 || cmd == nil {
+		t.Fatalf("decrypt enter: screen=%d jobs=%d cmd=%v", am.screen, len(am.jobs), cmd)
+	}
+	want := []string{"decrypt", "--all", d.KeysFile, d.Dir}
+	if strings.Join(am.jobs[0].argv, " ") != strings.Join(want, " ") {
+		t.Fatalf("decrypt job argv = %v, want %v", am.jobs[0].argv, want)
+	}
+}
+
+func TestAppModel_DecryptNotDecryptableShowsNote(t *testing.T) {
+	m := appModel{
+		screen:   screenDecrypt,
+		dls:      []download{{Label: "srv"}},
+		dlStates: []decryptState{{packs: 0, hasKeys: false}},
+		list:     newAddrList([]string{"srv"}),
+	}
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.screen != screenDecrypt || am.note == "" || len(am.jobs) != 0 {
+		t.Fatalf("non-decryptable enter: screen=%d note=%q jobs=%d", am.screen, am.note, len(am.jobs))
 	}
 }
 

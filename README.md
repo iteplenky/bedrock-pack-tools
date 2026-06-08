@@ -15,7 +15,7 @@ Events catalog.
 - **`decrypt`** - turn encrypted packs into plain editable directories
 - **`encrypt`** - package a plain pack into a deployable `.mcpack` + `.mcpack.key`
 - **`featured`** - browse and download from Minecraft's Featured Servers / Live Events catalog
-- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `IP:PORT` yourself, then download + decrypt in one step
+- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `IP:PORT` yourself, pick an action (download, download + decrypt, or keys only), and watch live progress without leaving the menu - pause with `p`, cancel with `esc`, and run again when it's done
 
 **Scope.** Built for researchers, server operators auditing their own
 deployments, and pack authors recovering their own keys. Not for
@@ -61,11 +61,18 @@ the OS user-config directory:
 ## Quick start
 
 The easiest way is the interactive menu - run with no arguments, pick a
-server with the arrow keys, and it downloads + decrypts for you:
+server (or type an address), choose what to do, and watch it run without
+leaving the menu:
 
 ```bash
 ./bedrock-pack-tools
 ```
+
+Pick **Featured servers** to browse the live catalog (filter as you type,
+`space` to multi-select) or **Enter a server address** to point at any
+`host:port`. Then choose an action - download, download + decrypt, or keys
+only - and it streams progress in place: `p` pauses, `esc` cancels, and you
+land back on the menu when it finishes.
 
 Or from the command line:
 

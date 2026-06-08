@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +13,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
 	"golang.org/x/oauth2"
+)
+
+// Key glyphs used across the menu chrome. Arrows and ▸/› render in any
+// terminal font the spinner already relies on.
+const (
+	gUp        = "↑"
+	gDown      = "↓"
+	gLeft      = "←"
+	gRight     = "→"
+	gEnter     = "↵"
+	rowCursor  = "▸ "
+	crumbArrow = " › "
+	caret      = "▌"
 )
 
 // isInteractive reports whether stdin is a terminal (not a pipe/file), so
@@ -24,43 +37,18 @@ func isInteractive() bool {
 
 // runTUI opens the sectioned interactive menu. Xbox auth happens up front
 // (so any device-code prompt is visible before the alt-screen takes over);
-// the featured catalog is then loaded lazily only if that section is chosen.
-// On exit it hands the chosen address(es) to the existing download path.
+// everything else - browsing, downloading, decrypting - runs inside the
+// menu, which stays open until the user quits. quietAuthEnv mutes the
+// cached-token line so it doesn't linger on the main screen after exit, and
+// is inherited by the child processes the menu spawns.
 func runTUI() error {
+	_ = os.Setenv(quietAuthEnv, "1")
 	ts, err := getTokenSource()
 	if err != nil {
 		return err
 	}
-
-	out, err := tea.NewProgram(newAppModel(ts), tea.WithAltScreen()).Run()
-	if err != nil {
+	if _, err := tea.NewProgram(newAppModel(ts), tea.WithAltScreen()).Run(); err != nil {
 		return fmt.Errorf("interactive menu: %w", err)
-	}
-	app := out.(appModel)
-
-	if app.doAddress != "" {
-		fmt.Printf("\n  [->] %s\n", app.doAddress)
-		return runDownload([]string{"--decrypt", app.doAddress})
-	}
-	if len(app.doFeatured) == 0 {
-		return nil // user quit without choosing
-	}
-
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	for k, idx := range app.doFeatured {
-		s := app.fServers[idx]
-		fmt.Printf("\n  [%d/%d] %s\n", k+1, len(app.doFeatured), s.Name)
-		rctx, cancel := context.WithTimeout(sigCtx, featuredAPITimeout)
-		address, rerr := resolveAddress(rctx, app.fClient, s)
-		cancel()
-		if rerr != nil {
-			fmt.Fprintf(os.Stderr, "  %v\n", rerr)
-			continue
-		}
-		if derr := runDownload([]string{"--decrypt", address}); derr != nil {
-			fmt.Fprintf(os.Stderr, "  %v\n", derr)
-		}
 	}
 	return nil
 }
@@ -71,20 +59,42 @@ const (
 	screenMenu    screen = iota
 	screenLoading        // transient: featured catalog fetch + ping in flight
 	screenFeatured
+	screenSaved
+	screenRecent
+	screenDecrypt // decrypt packs from remembered download locations
 	screenAddress
+	screenAction  // pick download / download+decrypt / keys for the chosen targets
+	screenRunning // a job queue executing, with live output
+	screenDone    // per-target summary, any key returns to the menu
 )
 
-// section is one row of the main menu.
+// section is one row of the main menu, with a help line shown when it's
+// highlighted.
 type section struct {
 	label  string
+	desc   string
 	target screen
 }
 
 var sections = []section{
-	{"Featured servers", screenFeatured},
-	{"Enter a server address", screenAddress},
-	// Future: decrypt a local pack folder, dump keys only.
+	{"Featured servers", "Browse Mojang's live catalog and pick one or more.", screenFeatured},
+	{"Saved servers", "Addresses you saved for quick re-use.", screenSaved},
+	{"Recent addresses", "Addresses you entered recently, with their last result.", screenRecent},
+	{"Decrypt packs", "Decrypt packs you've downloaded - or fetch what's missing.", screenDecrypt},
+	{"Enter a server address", "Type any host:port, e.g. play.example.net:19132.", screenAddress},
 }
+
+func sectionTitle(target screen) string {
+	for _, s := range sections {
+		if s.target == target {
+			return s.label
+		}
+	}
+	return ""
+}
+
+// runLogTail is how many committed output lines the running screen shows.
+const runLogTail = 12
 
 // catalog messages drive the one async section (Featured needs the network).
 type catalogLoadedMsg struct {
@@ -94,24 +104,49 @@ type catalogLoadedMsg struct {
 type catalogErrMsg struct{ err error }
 
 // appModel is the root state machine: a main menu that delegates to the
-// featured list or the address field, then exposes the chosen target.
+// featured list, the saved/recent lists, or the address field, picks an
+// action, then runs it against each chosen target without leaving the menu.
 type appModel struct {
 	screen     screen
 	menuCursor int
 	ts         oauth2.TokenSource
-	featured   tuiModel // featured-list state (embedded, used on screenFeatured)
-	addr       addrModel
-	loadErr    error
+	width      int
+	store      store
 
-	// handoff fields read by runTUI after Run() returns:
-	doFeatured []int
-	fServers   []franchise.Server
-	fClient    *franchise.Client
-	doAddress  string
+	featured tuiModel      // featured-list state (screenFeatured)
+	list     addrListModel // saved/recent/decrypt cursor + selection
+	addr     addrModel
+	loadErr  error
+	note     string // transient confirmation (e.g. "saved"), cleared on next key
+
+	// decrypt section: remembered downloads + their live on-disk state,
+	// index-aligned. m.list (cursor/selection) indexes both.
+	dls      []download
+	dlStates []decryptState
+
+	// catalog, loaded once and reused across menu visits.
+	fServers []franchise.Server
+	fClient  *franchise.Client
+
+	// action picker.
+	actionFrom   screen // where esc/← returns to
+	actionCursor int
+
+	// run queue + live state.
+	act      action
+	jobs     []job
+	jobIdx   int
+	runProc  *os.Process
+	runCh    chan tea.Msg
+	paused   bool
+	canceled bool
+	statusLn string
+	logLines []string
+	results  []jobResult
 }
 
 func newAppModel(ts oauth2.TokenSource) appModel {
-	return appModel{screen: screenMenu, ts: ts}
+	return appModel{screen: screenMenu, ts: ts, store: loadStore()}
 }
 
 // loadCatalogCmd fetches + pings the featured catalog using the already-minted
@@ -133,11 +168,14 @@ func (m appModel) Init() tea.Cmd { return nil }
 
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
 	case catalogLoadedMsg:
 		if m.screen == screenLoading {
-			m.featured = newTUIModel(msg.servers)
 			m.fServers = msg.servers
 			m.fClient = msg.client
+			m.featured = newTUIModel(msg.servers)
 			m.screen = screenFeatured
 		}
 		return m, nil
@@ -147,6 +185,25 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = screenMenu
 		}
 		return m, nil
+	case resolvedMsg:
+		return m.onResolved(msg)
+	case jobStartedMsg:
+		return m.onJobStarted(msg)
+	case runEvent:
+		if m.screen != screenRunning {
+			return m, nil
+		}
+		if msg.transient {
+			m.statusLn = msg.text
+		} else {
+			m.logLines = append(m.logLines, msg.text)
+		}
+		if m.runCh != nil {
+			return m, waitRun(m.runCh)
+		}
+		return m, nil
+	case jobFinishedMsg:
+		return m.onJobFinished(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -155,128 +212,676 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m appModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.String() == "ctrl+c" {
+		if m.runProc != nil {
+			_ = killProcess(m.runProc)
+		}
 		return m, tea.Quit
 	}
+	m.note = "" // any key clears a transient confirmation; setters re-set it below
 	switch m.screen {
 	case screenMenu:
-		switch key.String() {
-		case "esc", "q":
-			return m, tea.Quit
-		case "up":
-			if m.menuCursor > 0 {
-				m.menuCursor--
-			}
-		case "down":
-			if m.menuCursor < len(sections)-1 {
-				m.menuCursor++
-			}
-		case "enter":
-			switch sections[m.menuCursor].target {
-			case screenFeatured:
-				m.screen = screenLoading
-				m.loadErr = nil
-				return m, loadCatalogCmd(m.ts)
-			case screenAddress:
-				m.screen = screenAddress
-				m.addr = addrModel{}
-			}
-		}
+		return m.handleMenuKey(key)
 	case screenLoading:
-		if key.String() == "esc" {
+		if back(key) {
 			m.screen = screenMenu
 		}
 	case screenFeatured:
-		// esc/enter are handled here so the embedded model's tea.Quit
-		// doesn't leak out and quit the whole program on a back-press.
-		switch key.String() {
-		case "esc":
-			if m.featured.filter != "" {
-				m.featured.filter = ""
-				m.featured.applyFilter()
-			} else {
-				m.screen = screenMenu
-			}
-		case "enter":
-			m.doFeatured = m.featured.confirmedIndices()
-			return m, tea.Quit
-		default:
-			updated, _ := m.featured.Update(key)
-			m.featured = updated.(tuiModel)
-		}
+		return m.handleFeaturedKey(key)
+	case screenSaved:
+		return m.handleListKey(key, false)
+	case screenRecent:
+		return m.handleListKey(key, true)
+	case screenDecrypt:
+		return m.handleDecryptKey(key)
 	case screenAddress:
-		switch key.String() {
-		case "esc":
-			m.screen = screenMenu
-		case "enter":
-			addr, err := validateAddress(m.addr.value)
-			if err != nil {
-				m.addr.err = err.Error()
-			} else {
-				m.doAddress = addr
-				return m, tea.Quit
+		return m.handleAddressKey(key)
+	case screenAction:
+		return m.handleActionKey(key)
+	case screenRunning:
+		return m.handleRunningKey(key)
+	case screenDone:
+		return m.toMenu(), nil // any key returns to the menu
+	}
+	return m, nil
+}
+
+// back reports whether key means "go back a level" (esc or left arrow);
+// forward means "drill in / confirm" (enter or right arrow). Left/right are
+// deliberately not treated this way inside the text field, where they'd risk
+// discarding typed input.
+func back(key tea.KeyMsg) bool    { return key.String() == "esc" || key.String() == "left" }
+func forward(key tea.KeyMsg) bool { return key.String() == "enter" || key.String() == "right" }
+
+func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc", "q":
+		return m, tea.Quit
+	case "up":
+		if m.menuCursor > 0 {
+			m.menuCursor--
+		}
+	case "down":
+		if m.menuCursor < len(sections)-1 {
+			m.menuCursor++
+		}
+	}
+	if forward(key) {
+		switch sections[m.menuCursor].target {
+		case screenFeatured:
+			m.loadErr = nil
+			if m.fServers != nil { // reuse the catalog from an earlier visit
+				m.featured = newTUIModel(m.fServers)
+				m.screen = screenFeatured
+				return m, nil
 			}
-		case "backspace":
-			if m.addr.value != "" {
-				m.addr.value = m.addr.value[:len(m.addr.value)-1]
-				m.addr.err = ""
-			}
-		default:
-			if key.Type == tea.KeyRunes {
-				m.addr.value += string(key.Runes)
-				m.addr.err = ""
-			}
+			m.screen = screenLoading
+			return m, loadCatalogCmd(m.ts)
+		case screenSaved:
+			m.list = newAddrList(m.store.Saved)
+			m.screen = screenSaved
+		case screenRecent:
+			m.list = newAddrList(m.store.Recent)
+			m.screen = screenRecent
+		case screenDecrypt:
+			m.openDecrypt()
+		case screenAddress:
+			m.addr = addrModel{}
+			m.screen = screenAddress
 		}
 	}
 	return m, nil
 }
 
+func (m appModel) handleFeaturedKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// esc/←/enter/→ are handled here so the embedded model's tea.Quit doesn't
+	// leak out and quit the whole program.
+	switch {
+	case back(key):
+		if m.featured.filter != "" {
+			m.featured.filter = ""
+			m.featured.applyFilter()
+		} else {
+			m.screen = screenMenu
+		}
+	case forward(key):
+		idxs := m.featured.confirmedIndices()
+		if len(idxs) == 0 {
+			return m, nil
+		}
+		m.jobs = make([]job, 0, len(idxs))
+		for _, idx := range idxs {
+			m.jobs = append(m.jobs, job{label: m.fServers[idx].Name, server: &m.fServers[idx]})
+		}
+		m.enterAction(screenFeatured)
+	default:
+		updated, _ := m.featured.Update(key)
+		m.featured = updated.(tuiModel)
+	}
+	return m, nil
+}
+
+func (m appModel) handleListKey(key tea.KeyMsg, isRecent bool) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up":
+		m.list.moveUp()
+	case "down":
+		m.list.moveDown()
+	case " ":
+		m.list.toggle()
+	case "d":
+		if addr, ok := m.list.current(); ok {
+			if isRecent {
+				(&m.store).removeRecent(addr)
+				m.list = newAddrList(m.store.Recent)
+			} else {
+				(&m.store).removeSaved(addr)
+				m.list = newAddrList(m.store.Saved)
+			}
+		}
+		return m, nil
+	case "s":
+		if isRecent {
+			if addr, ok := m.list.current(); ok {
+				(&m.store).addSaved(addr)
+				m.note = "saved " + addr
+			}
+		}
+		return m, nil
+	}
+	switch {
+	case back(key):
+		m.screen = screenMenu
+	case forward(key):
+		addrs := m.list.confirmed()
+		if len(addrs) == 0 {
+			return m, nil
+		}
+		m.jobs = make([]job, 0, len(addrs))
+		for _, a := range addrs {
+			m.jobs = append(m.jobs, job{label: a, address: a})
+		}
+		m.enterAction(m.screen)
+	}
+	return m, nil
+}
+
+func (m appModel) handleAddressKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.screen = screenMenu
+	case "enter":
+		addr, err := validateAddress(m.addr.value)
+		if err != nil {
+			m.addr.err = err.Error()
+		} else {
+			(&m.store).addRecent(addr)
+			m.jobs = []job{{label: addr, address: addr}}
+			m.enterAction(screenAddress)
+		}
+	case "ctrl+s":
+		addr, err := validateAddress(m.addr.value)
+		if err != nil {
+			m.addr.err = err.Error()
+		} else {
+			(&m.store).addSaved(addr)
+			m.note = "saved " + addr
+		}
+	case "backspace":
+		if m.addr.value != "" {
+			m.addr.value = m.addr.value[:len(m.addr.value)-1]
+			m.addr.err = ""
+		}
+	default:
+		if key.Type == tea.KeyRunes {
+			m.addr.value += string(key.Runes)
+			m.addr.err = ""
+		}
+	}
+	return m, nil
+}
+
+func (m appModel) handleActionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up":
+		if m.actionCursor > 0 {
+			m.actionCursor--
+		}
+	case "down":
+		if m.actionCursor < len(actionChoices)-1 {
+			m.actionCursor++
+		}
+	}
+	switch {
+	case back(key):
+		m.screen = m.actionFrom
+	case forward(key):
+		return m.startRun(m.jobs, actionChoices[m.actionCursor].value)
+	}
+	return m, nil
+}
+
+// startRun resets the live state and kicks off the queue of jobs.
+func (m appModel) startRun(jobs []job, act action) (appModel, tea.Cmd) {
+	// Runs launched straight from the decrypt section set their own
+	// breadcrumb origin (the action picker already set actionFrom otherwise).
+	if m.screen == screenDecrypt {
+		m.actionFrom = screenDecrypt
+	}
+	m.jobs = jobs
+	m.act = act
+	m.screen = screenRunning
+	m.jobIdx = 0
+	m.logLines = nil
+	m.results = nil
+	m.statusLn = ""
+	m.paused = false
+	m.canceled = false
+	return m.beginJob()
+}
+
+func (m appModel) handleRunningKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case back(key):
+		// Cancel the queue: kill the current child, and let the resulting
+		// finish/resolve message route us to the summary.
+		m.canceled = true
+		if m.runProc != nil {
+			_ = killProcess(m.runProc)
+		}
+	case key.String() == "p" || key.String() == "x":
+		if pauseSupported && m.runProc != nil {
+			if m.paused {
+				_ = resumeProcess(m.runProc)
+			} else {
+				_ = suspendProcess(m.runProc)
+			}
+			m.paused = !m.paused
+		}
+	}
+	return m, nil
+}
+
+// enterAction moves to the action picker, remembering where to go on back.
+func (m *appModel) enterAction(from screen) {
+	m.actionFrom = from
+	m.actionCursor = 0
+	m.screen = screenAction
+}
+
+// beginJob advances to jobs[jobIdx], kicking off a resolve (featured rows)
+// or the child process (ready addresses). When the queue is exhausted - or a
+// cancel is pending - it shows the summary.
+func (m appModel) beginJob() (appModel, tea.Cmd) {
+	if m.canceled || m.jobIdx >= len(m.jobs) {
+		m.screen = screenDone
+		m.statusLn = ""
+		return m, nil
+	}
+	j := m.jobs[m.jobIdx]
+	m.logLines = append(m.logLines, "-- "+j.label+" --")
+	if j.argv != nil {
+		m.statusLn = "Starting..."
+		return m, runArgvCmd(j.argv)
+	}
+	if j.address == "" && j.server != nil {
+		m.statusLn = "Resolving address..."
+		return m, resolveJobCmd(m.fClient, *j.server)
+	}
+	m.statusLn = "Starting..."
+	return m, runArgvCmd(m.act.args(j.address))
+}
+
+func (m appModel) onResolved(msg resolvedMsg) (tea.Model, tea.Cmd) {
+	if m.screen != screenRunning {
+		return m, nil
+	}
+	if m.canceled {
+		return m.beginJob() // routes to the summary
+	}
+	if msg.err != nil {
+		m.logLines = append(m.logLines, "[err] "+msg.err.Error())
+		m.results = append(m.results, jobResult{label: m.jobs[m.jobIdx].label, err: msg.err})
+		m.jobIdx++
+		return m.beginJob()
+	}
+	m.jobs[m.jobIdx].address = msg.address
+	m.statusLn = "Starting..."
+	return m, runArgvCmd(m.act.args(msg.address))
+}
+
+func (m appModel) onJobStarted(msg jobStartedMsg) (tea.Model, tea.Cmd) {
+	if m.screen != screenRunning || m.canceled {
+		_ = killProcess(msg.proc)
+		if m.screen == screenRunning {
+			m.screen = screenDone
+			m.statusLn = ""
+		}
+		return m, nil
+	}
+	m.runProc = msg.proc
+	m.runCh = msg.ch
+	return m, waitRun(msg.ch)
+}
+
+func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
+	if m.screen != screenRunning {
+		return m, nil
+	}
+	j := m.jobs[m.jobIdx]
+	m.results = append(m.results, jobResult{label: j.label, err: msg.err})
+	if msg.err != nil {
+		m.logLines = append(m.logLines, "[err] "+msg.err.Error())
+	}
+	m.recordOutcome(j, msg.err == nil)
+	m.runProc = nil
+	m.runCh = nil
+	m.paused = false
+	m.statusLn = ""
+	m.jobIdx++
+	return m.beginJob()
+}
+
+// recordOutcome persists a finished server job's result: the last status for
+// its address, plus where it saved (so the decrypt section can find it).
+// Decrypt jobs (argv set) and empty addresses are skipped.
+func (m *appModel) recordOutcome(j job, ok bool) {
+	if j.argv != nil || j.address == "" {
+		return
+	}
+	m.store.recordStatus(j.address, ok)
+	if !ok {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	m.store.addDownload(download{
+		Label:    j.label,
+		Address:  j.address,
+		Dir:      cwd,
+		KeysFile: filepath.Join(cwd, sanitizeServerAddr(j.address)+keysSuffix),
+		When:     nowStamp(),
+	})
+}
+
+// toMenu resets the per-run state and returns to the main menu.
+func (m appModel) toMenu() appModel {
+	m.screen = screenMenu
+	m.jobs = nil
+	m.results = nil
+	m.logLines = nil
+	m.statusLn = ""
+	m.note = ""
+	m.paused = false
+	m.canceled = false
+	return m
+}
+
+// --- views ---------------------------------------------------------------
+
 func (m appModel) View() string {
 	switch m.screen {
 	case screenLoading:
-		return "\n  Loading featured servers...\n"
+		return m.crumb() + "\n  Loading featured servers...\n"
 	case screenFeatured:
-		return m.featured.View()
+		return m.featuredView()
+	case screenSaved:
+		return m.listView("Nothing saved yet - save an address from Recent or the address screen.", false)
+	case screenRecent:
+		return m.listView("No recent addresses yet - enter one from the address screen.", true)
+	case screenDecrypt:
+		return m.decryptView()
 	case screenAddress:
-		return m.addr.view()
+		return m.addressView()
+	case screenAction:
+		return m.actionView()
+	case screenRunning:
+		return m.runningView()
+	case screenDone:
+		return m.doneView()
 	default:
 		return m.menuView()
 	}
 }
 
-func (m appModel) menuView() string {
-	var b strings.Builder
-	b.WriteString("\n  bedrock-pack-tools\n")
-	b.WriteString("  ↑/↓ move · ↵ select · esc quit\n\n")
-	for i, s := range sections {
-		if i == m.menuCursor {
-			b.WriteString(" " + colorCyan + "▸ " + s.label + colorReset + "\n")
-		} else {
-			b.WriteString("   " + s.label + "\n")
+// crumb renders the breadcrumb trail - dim parents, a highlighted current -
+// so the user can always see where they are.
+func (m appModel) crumb() string {
+	trail := []string{"Home"}
+	switch m.screen {
+	case screenLoading:
+		trail = append(trail, sectionTitle(screenFeatured), "Loading")
+	case screenFeatured, screenSaved, screenRecent, screenDecrypt, screenAddress:
+		trail = append(trail, sectionTitle(m.screen))
+	case screenAction:
+		trail = append(trail, sectionTitle(m.actionFrom), "Choose an action")
+	case screenRunning:
+		trail = append(trail, sectionTitle(m.actionFrom), "Working")
+	case screenDone:
+		trail = append(trail, sectionTitle(m.actionFrom), m.doneTitle())
+	}
+	// Drop any empty segment (e.g. an unset origin) so the trail never
+	// renders a dangling "Home ›  › Working".
+	compact := trail[:0]
+	for _, t := range trail {
+		if t != "" {
+			compact = append(compact, t)
 		}
 	}
+	trail = compact
+
+	var b strings.Builder
+	b.WriteString("\n  ")
+	for i, t := range trail {
+		if i > 0 {
+			b.WriteString(colorDim + crumbArrow + colorReset)
+		}
+		if i == len(trail)-1 {
+			b.WriteString(colorCyan + t + colorReset)
+		} else {
+			b.WriteString(colorDim + t + colorReset)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// hint is one key + label pair in the footer.
+type hint struct{ key, label string }
+
+func hintBar(hints ...hint) string {
+	parts := make([]string, len(hints))
+	for i, h := range hints {
+		parts[i] = h.key + " " + h.label
+	}
+	return colorDim + "  " + strings.Join(parts, " · ") + colorReset + "\n"
+}
+
+func (m appModel) writeRow(b *strings.Builder, selected bool, text string) {
+	if selected {
+		b.WriteString(" " + colorCyan + rowCursor + text + colorReset + "\n")
+	} else {
+		b.WriteString("   " + text + "\n")
+	}
+}
+
+func (m appModel) menuView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n")
+	for i, s := range sections {
+		m.writeRow(&b, i == m.menuCursor, s.label)
+	}
+	b.WriteString("\n  " + colorDim + sections[m.menuCursor].desc + colorReset + "\n")
 	if m.loadErr != nil {
 		b.WriteString("\n  " + colorRed + "Could not load featured servers: " + m.loadErr.Error() + colorReset + "\n")
 	}
 	b.WriteString("\n")
+	b.WriteString(hintBar(
+		hint{gUp + gDown, "move"},
+		hint{gRight + "/" + gEnter, "open"},
+		hint{gLeft + "/esc", "quit"},
+	))
 	return b.String()
 }
 
-// addrModel is a single-line host:port text field.
+func (m appModel) featuredView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString(m.featured.View())
+	if s, ok := m.featured.selectedServer(); ok {
+		b.WriteString("\n  " + colorDim + featuredHelp(s) + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(hintBar(
+		hint{gUp + gDown, "move"},
+		hint{"space", "select"},
+		hint{gRight + "/" + gEnter, "go"},
+		hint{"a-z", "filter"},
+		hint{gLeft + "/esc", "back"},
+	))
+	return b.String()
+}
+
+// featuredHelp explains the highlighted row, especially the ones whose
+// address isn't known until download time.
+func featuredHelp(s franchise.Server) string {
+	switch s.Kind {
+	case franchise.KindGathering:
+		return "Live event - its address is resolved when you download."
+	case franchise.KindPartnerExperience:
+		return "Experience server - its address is resolved when you download."
+	}
+	if s.HasAddress() {
+		return "Direct address: " + s.Address()
+	}
+	return "No public address for this entry."
+}
+
+func (m appModel) listView(emptyMsg string, isRecent bool) string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n")
+	if len(m.list.items) == 0 {
+		b.WriteString("  " + colorDim + emptyMsg + colorReset + "\n\n")
+		b.WriteString(hintBar(hint{gLeft + "/esc", "back"}))
+		return b.String()
+	}
+	for i, addr := range m.list.items {
+		box := "[ ]"
+		if m.list.picked[i] {
+			box = "[x]"
+		}
+		// Wrap only the box+address in the selection color so the status
+		// keeps its own green/red; append it after.
+		if i == m.list.cursor {
+			b.WriteString(" " + colorCyan + rowCursor + box + " " + addr + colorReset)
+		} else {
+			b.WriteString("   " + box + " " + addr)
+		}
+		if st := m.recentStatusLabel(addr); st != "" {
+			b.WriteString("   " + st)
+		}
+		b.WriteString("\n")
+	}
+	if m.note != "" {
+		b.WriteString("\n  " + colorGreen + m.note + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	hints := []hint{
+		{gUp + gDown, "move"},
+		{"space", "select"},
+		{gRight + "/" + gEnter, "go"},
+	}
+	if isRecent {
+		hints = append(hints, hint{"s", "save"})
+	}
+	hints = append(hints, hint{"d", "delete"}, hint{gLeft + "/esc", "back"})
+	b.WriteString(hintBar(hints...))
+	return b.String()
+}
+
+func (m appModel) addressView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n  Server address: " + colorCyan + m.addr.value + colorReset + caret + "\n")
+	if m.addr.err != "" {
+		b.WriteString("  " + colorRed + m.addr.err + colorReset + "\n")
+	}
+	if m.note != "" {
+		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
+	}
+	b.WriteString("  " + colorDim + "Example: play.example.net:19132 or 1.2.3.4:19132" + colorReset + "\n\n")
+	b.WriteString(hintBar(
+		hint{gEnter, "continue"},
+		hint{"^s", "save"},
+		hint{"esc", "back"},
+	))
+	return b.String()
+}
+
+func (m appModel) actionView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n  " + colorDim + "Action for " + pluralServers(len(m.jobs)) + colorReset + "\n\n")
+	for i, c := range actionChoices {
+		m.writeRow(&b, i == m.actionCursor, c.label)
+	}
+	b.WriteString("\n  " + colorDim + actionChoices[m.actionCursor].desc + colorReset + "\n\n")
+	b.WriteString(hintBar(
+		hint{gUp + gDown, "move"},
+		hint{gRight + "/" + gEnter, "start"},
+		hint{gLeft + "/esc", "back"},
+	))
+	return b.String()
+}
+
+func (m appModel) runningView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("  " + colorDim + fmt.Sprintf("job %d/%d", min(m.jobIdx+1, len(m.jobs)), len(m.jobs)) + colorReset + "\n\n")
+
+	start := 0
+	if len(m.logLines) > runLogTail {
+		start = len(m.logLines) - runLogTail
+	}
+	for _, ln := range m.logLines[start:] {
+		b.WriteString("  " + m.truncate(ln) + "\n")
+	}
+	switch {
+	case m.statusLn != "" && m.paused:
+		b.WriteString("  " + colorYellow + "[paused] " + m.truncate(m.statusLn) + colorReset + "\n")
+	case m.statusLn != "":
+		b.WriteString("  " + colorCyan + m.truncate(m.statusLn) + colorReset + "\n")
+	case m.paused:
+		b.WriteString("  " + colorYellow + "[paused]" + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	hints := []hint{}
+	if pauseSupported {
+		label := "pause"
+		if m.paused {
+			label = "resume"
+		}
+		hints = append(hints, hint{"p", label})
+	}
+	hints = append(hints, hint{gLeft + "/esc", "cancel"})
+	b.WriteString(hintBar(hints...))
+	return b.String()
+}
+
+func (m appModel) doneTitle() string {
+	if m.canceled {
+		return "Canceled"
+	}
+	return "Done"
+}
+
+func (m appModel) doneView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n")
+	ok := 0
+	for _, r := range m.results {
+		if r.err != nil {
+			b.WriteString("  " + colorRed + "[err]" + colorReset + " " + r.label + " - " + r.err.Error() + "\n")
+		} else {
+			ok++
+			b.WriteString("  " + colorGreen + "[ok]" + colorReset + "  " + r.label + "\n")
+		}
+	}
+	fmt.Fprintf(&b, "\n  %d/%d succeeded · files saved in the current directory\n\n", ok, len(m.results))
+	b.WriteString(hintBar(hint{"any key", gRight + " menu"}))
+	return b.String()
+}
+
+// truncate clips a line to the current terminal width so a long pack name or
+// path can't wrap and break the repaint. Lines are ANSI-stripped already.
+func (m appModel) truncate(s string) string {
+	limit := m.width - 2 // the two-space indent View adds
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	if limit < 4 {
+		return s[:limit]
+	}
+	return s[:limit-3] + "..."
+}
+
+func pluralServers(n int) string {
+	if n == 1 {
+		return "1 server"
+	}
+	return fmt.Sprintf("%d servers", n)
+}
+
+// --- address field -------------------------------------------------------
+
+// addrModel is the host:port text field's data (rendered by addressView).
 type addrModel struct {
 	value string
 	err   string
-}
-
-func (a addrModel) view() string {
-	var b strings.Builder
-	b.WriteString("\n  Enter a server address\n")
-	b.WriteString("  type host:port · ↵ download+decrypt · esc back\n\n")
-	b.WriteString("  Server address: " + colorCyan + a.value + colorReset + "▌\n")
-	if a.err != "" {
-		b.WriteString("  " + colorRed + a.err + colorReset + "\n")
-	}
-	b.WriteString("\n")
-	return b.String()
 }
 
 // validateAddress accepts a host:port with a numeric 0-65535 port and a
@@ -293,14 +898,262 @@ func validateAddress(s string) (string, error) {
 	return s, nil
 }
 
+// --- saved / recent list -------------------------------------------------
+
+// addrListModel is a filter-free, multi-select picker over plain addresses,
+// shared by the Saved and Recent screens.
+type addrListModel struct {
+	items  []string
+	cursor int
+	picked map[int]bool
+}
+
+func newAddrList(items []string) addrListModel {
+	return addrListModel{items: items, picked: map[int]bool{}}
+}
+
+func (m *addrListModel) moveUp() {
+	if m.cursor > 0 {
+		m.cursor--
+	}
+}
+
+func (m *addrListModel) moveDown() {
+	if m.cursor < len(m.items)-1 {
+		m.cursor++
+	}
+}
+
+func (m *addrListModel) toggle() {
+	if len(m.items) == 0 {
+		return
+	}
+	if m.picked[m.cursor] {
+		delete(m.picked, m.cursor)
+	} else {
+		m.picked[m.cursor] = true
+	}
+}
+
+func (m addrListModel) current() (string, bool) {
+	if m.cursor >= 0 && m.cursor < len(m.items) {
+		return m.items[m.cursor], true
+	}
+	return "", false
+}
+
+// confirmedIdx returns the picked row indices, or the cursor row when nothing
+// is explicitly selected.
+func (m addrListModel) confirmedIdx() []int {
+	if len(m.picked) > 0 {
+		idx := make([]int, 0, len(m.picked))
+		for i := range m.picked {
+			idx = append(idx, i)
+		}
+		sort.Ints(idx)
+		return idx
+	}
+	if len(m.items) > 0 {
+		return []int{m.cursor}
+	}
+	return nil
+}
+
+// confirmed maps confirmedIdx through the (string) items.
+func (m addrListModel) confirmed() []string {
+	idx := m.confirmedIdx()
+	out := make([]string, len(idx))
+	for k, i := range idx {
+		out[k] = m.items[i]
+	}
+	return out
+}
+
+// recentStatusLabel renders the last run outcome (ok/failed + age) for an
+// address, or "" if it was never run.
+func (m appModel) recentStatusLabel(addr string) string {
+	st, ok := m.store.Status[addr]
+	if !ok {
+		return ""
+	}
+	label := colorGreen + "ok" + colorReset
+	if !st.OK {
+		label = colorRed + "failed" + colorReset
+	}
+	if age := ageLabel(st.LastUsed); age != "" {
+		label += colorDim + " · " + age + colorReset
+	}
+	return label
+}
+
+// --- decrypt section -----------------------------------------------------
+
+// decryptState is the live on-disk picture of a remembered download.
+type decryptState struct {
+	packs   int  // pack folders that still contain a contents.json
+	hasKeys bool // the keys file is present
+}
+
+func (d decryptState) decryptable() bool { return d.packs > 0 && d.hasKeys }
+
+// inspectDownload reads the filesystem to see what's actually present now.
+func inspectDownload(d download) decryptState {
+	st := decryptState{}
+	if d.KeysFile != "" {
+		if _, err := os.Stat(d.KeysFile); err == nil {
+			st.hasKeys = true
+		}
+	}
+	entries, err := os.ReadDir(d.Dir)
+	if err != nil {
+		return st
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(d.Dir, e.Name(), contentsJSON)); err == nil {
+			st.packs++
+		}
+	}
+	return st
+}
+
+// openDecrypt loads the remembered downloads and their current on-disk state.
+func (m *appModel) openDecrypt() {
+	m.dls = append([]download(nil), m.store.Downloads...)
+	m.dlStates = make([]decryptState, len(m.dls))
+	labels := make([]string, len(m.dls))
+	for i, d := range m.dls {
+		m.dlStates[i] = inspectDownload(d)
+		labels[i] = d.Label
+	}
+	m.list = newAddrList(labels)
+	m.screen = screenDecrypt
+}
+
+func (m appModel) currentDownload() (int, bool) {
+	if m.list.cursor >= 0 && m.list.cursor < len(m.dls) {
+		return m.list.cursor, true
+	}
+	return 0, false
+}
+
+func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up":
+		m.list.moveUp()
+		return m, nil
+	case "down":
+		m.list.moveDown()
+		return m, nil
+	case " ":
+		m.list.toggle()
+		return m, nil
+	case "d":
+		if i, ok := m.currentDownload(); ok {
+			m.store.removeDownload(m.dls[i])
+			m.openDecrypt()
+		}
+		return m, nil
+	case "g":
+		if i, ok := m.currentDownload(); ok && m.dls[i].Address != "" {
+			d := m.dls[i]
+			return m.startRun([]job{{label: d.Label, address: d.Address}}, actionDownloadDecrypt)
+		}
+		return m, nil
+	}
+	switch {
+	case back(key):
+		m.screen = screenMenu
+	case forward(key):
+		var jobs []job
+		for _, i := range m.list.confirmedIdx() {
+			d, st := m.dls[i], m.dlStates[i]
+			if !st.decryptable() {
+				continue
+			}
+			jobs = append(jobs, job{label: d.Label, argv: []string{"decrypt", "--all", d.KeysFile, d.Dir}})
+		}
+		if len(jobs) == 0 {
+			m.note = "nothing to decrypt - need both packs and a keys file (press g to fetch)"
+			return m, nil
+		}
+		return m.startRun(jobs, actionDownloadDecrypt)
+	}
+	return m, nil
+}
+
+func (m appModel) decryptView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n")
+	if len(m.dls) == 0 {
+		b.WriteString("  " + colorDim + "Nothing downloaded yet - download a server first, then come back to decrypt." + colorReset + "\n\n")
+		b.WriteString(hintBar(hint{gLeft + "/esc", "back"}))
+		return b.String()
+	}
+	for i, d := range m.dls {
+		box := "[ ]"
+		if m.list.picked[i] {
+			box = "[x]"
+		}
+		label := fmt.Sprintf("%-18s", d.Label)
+		if i == m.list.cursor {
+			b.WriteString(" " + colorCyan + rowCursor + box + " " + label + colorReset)
+		} else {
+			b.WriteString("   " + box + " " + label)
+		}
+		b.WriteString("  " + decryptBadge(m.dlStates[i]) + "\n")
+	}
+	if i, ok := m.currentDownload(); ok {
+		b.WriteString("\n  " + colorDim + decryptHelp(m.dlStates[i]) + colorReset + "\n")
+	}
+	if m.note != "" {
+		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(hintBar(
+		hint{gUp + gDown, "move"},
+		hint{"space", "select"},
+		hint{gRight + "/" + gEnter, "decrypt"},
+		hint{"g", "download"},
+		hint{"d", "forget"},
+		hint{gLeft + "/esc", "back"},
+	))
+	return b.String()
+}
+
+func decryptBadge(st decryptState) string {
+	keys := colorRed + "no keys" + colorReset
+	if st.hasKeys {
+		keys = colorGreen + "keys" + colorReset
+	}
+	return colorDim + fmt.Sprintf("%d packs · ", st.packs) + colorReset + keys
+}
+
+func decryptHelp(st decryptState) string {
+	switch {
+	case st.decryptable():
+		return fmt.Sprintf("Decrypt %d packs - output lands in a sibling _decrypted folder.", st.packs)
+	case st.packs > 0 && !st.hasKeys:
+		return "Packs are here but the keys file is missing - press g to fetch keys + packs."
+	case st.packs == 0 && st.hasKeys:
+		return "Keys are here but the packs are gone - press g to download them again."
+	default:
+		return "Nothing on disk anymore - press g to re-download, or d to forget this entry."
+	}
+}
+
+// --- featured list -------------------------------------------------------
+
 // tuiModel is the featured-list screen: a filterable, multi-select picker.
 type tuiModel struct {
-	servers   []franchise.Server
-	filtered  []int        // indices into servers passing the current filter
-	cursor    int          // position within filtered
-	filter    string       // case-insensitive name substring
-	picked    map[int]bool // chosen server indices (into servers)
-	confirmed []int        // set on enter: servers to download, in order
+	servers  []franchise.Server
+	filtered []int        // indices into servers passing the current filter
+	cursor   int          // position within filtered
+	filter   string       // case-insensitive name substring
+	picked   map[int]bool // chosen server indices (into servers)
 }
 
 func newTUIModel(servers []franchise.Server) tuiModel {
@@ -339,6 +1192,13 @@ func (m tuiModel) confirmedIndices() []int {
 	return nil
 }
 
+func (m tuiModel) selectedServer() (franchise.Server, bool) {
+	if len(m.filtered) == 0 {
+		return franchise.Server{}, false
+	}
+	return m.servers[m.filtered[m.cursor]], true
+}
+
 func (m tuiModel) Init() tea.Cmd { return nil }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -347,15 +1207,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key.String() {
-	case "ctrl+c":
-		return m, tea.Quit
-	case "esc":
-		if m.filter != "" {
-			m.filter = ""
-			m.applyFilter()
-			return m, nil
-		}
-		return m, tea.Quit
 	case "up":
 		if m.cursor > 0 {
 			m.cursor--
@@ -373,9 +1224,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.picked[idx] = true
 			}
 		}
-	case "enter":
-		m.confirmed = m.confirmedIndices()
-		return m, tea.Quit
 	case "backspace":
 		if m.filter != "" {
 			m.filter = m.filter[:len(m.filter)-1]
@@ -390,16 +1238,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View renders just the filter line and rows; the breadcrumb and footer are
+// supplied by appModel.featuredView.
 func (m tuiModel) View() string {
 	var b strings.Builder
-	b.WriteString("\n  Featured Servers\n")
-	b.WriteString("  ↑/↓ move · space select · ↵ download+decrypt · type to filter · esc back\n")
 	if m.filter != "" {
-		b.WriteString("  filter: " + m.filter + "\n")
+		b.WriteString("  " + colorDim + "filter: " + m.filter + colorReset + "\n")
 	}
 	b.WriteString("\n")
 	if len(m.filtered) == 0 {
-		b.WriteString("   (no servers match)\n\n")
+		b.WriteString("   (no servers match)\n")
 		return b.String()
 	}
 	for vi, idx := range m.filtered {
@@ -410,11 +1258,10 @@ func (m tuiModel) View() string {
 		}
 		row := fmt.Sprintf("%s %-18s  %-30s  %s", box, s.Name, addressColumn(s), statusFor(s))
 		if vi == m.cursor {
-			b.WriteString(" " + colorCyan + "▸ " + row + colorReset + "\n")
+			b.WriteString(" " + colorCyan + rowCursor + row + colorReset + "\n")
 		} else {
 			b.WriteString("   " + row + "\n")
 		}
 	}
-	b.WriteString("\n")
 	return b.String()
 }
