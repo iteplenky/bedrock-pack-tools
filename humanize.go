@@ -133,7 +133,7 @@ func classifyOurSentinels(err error) (diagnostic, bool) {
 			headline: "Xbox identity was rejected by Mojang's franchise services",
 			body:     "We re-minted the token once and Mojang still rejected it. That usually means the underlying Microsoft account itself is now in a bad state, not just our cache.",
 			fix: "Delete the cached tokens and re-authenticate from scratch:\n" +
-				"  rm \"" + tokenPath() + "\"\n" +
+				"  rm \"" + mustTokenPath() + "\"\n" +
 				"  rm \"" + mustMCTokenPath() + "\"\n" +
 				"Then re-run. If it still fails, the MSA probably needs attention at account.microsoft.com.",
 		}, true
@@ -217,14 +217,14 @@ func classifyOAuth(err error) (diagnostic, bool) {
 	case "invalid_grant":
 		return diagnostic{
 			headline: "Cached Microsoft refresh token is no longer valid",
-			body:     "Microsoft revoked or aged-out the refresh token in `" + tokenPath() + "`. That happens after long inactivity, password resets, or 2FA changes.",
-			fix:      "Delete the cached token and re-authenticate from scratch:\n  rm \"" + tokenPath() + "\"",
+			body:     "Microsoft revoked or aged-out the refresh token in `" + mustTokenPath() + "`. That happens after long inactivity, password resets, or 2FA changes.",
+			fix:      "Delete the cached token and re-authenticate from scratch:\n  rm \"" + mustTokenPath() + "\"",
 		}, true
 	}
 	return diagnostic{
 		headline: "Microsoft sign-in failed (OAuth `" + rErr.ErrorCode + "`)",
 		body:     "Microsoft's OAuth endpoint returned an error we don't have a specific message for.",
-		fix:      "Retry once. If it persists, delete the cached token at `" + tokenPath() + "` and authenticate from scratch.",
+		fix:      "Retry once. If it persists, delete the cached token at `" + mustTokenPath() + "` and authenticate from scratch.",
 	}, true
 }
 
@@ -536,7 +536,7 @@ func classifyXSTS(msg, low string) (diagnostic, bool) {
 		return diagnostic{
 			headline: "Microsoft sign-in failed during the Xbox handshake",
 			body:     "The MSA -> Xbox Live -> PlayFab chain rejected the credentials with a non-network error.",
-			fix:      "Re-running often clears transient hiccups. If it persists, delete the cached token at `" + tokenPath() + "` and authenticate from scratch.",
+			fix:      "Re-running often clears transient hiccups. If it persists, delete the cached token at `" + mustTokenPath() + "` and authenticate from scratch.",
 		}, true
 	}
 	return diagnostic{}, false
@@ -624,6 +624,16 @@ func friendlyService(host string) string {
 		return host
 	}
 	return "the upstream service"
+}
+
+// mustTokenPath is the path for "rm <token>" instructions, with a
+// readable placeholder when UserConfigDir fails.
+func mustTokenPath() string {
+	p, err := tokenPath()
+	if err != nil {
+		return "<cache dir>/" + tokenFileName
+	}
+	return p
 }
 
 // mustMCTokenPath is the path for "rm <token>" instructions, with a
