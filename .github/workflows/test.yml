@@ -23,33 +23,5 @@ on:
       - ".goreleaser.yml"
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.25"
-
-      - run: go test -race -count=1 ./...
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.25"
-
-      - run: go vet ./...
-
-      - name: golangci-lint
-        run: |
-          for i in 1 2 3; do
-            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-              | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2 && break
-            echo "golangci-lint install attempt $i failed; retrying in 10s"; sleep 10
-          done
-          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
+  ci:
+    uses: ./.github/workflows/ci.yml

@@ -1,0 +1,32 @@
+name: CI
+
+# Reusable checks - called by test.yml (push/PR) and as the release gate.
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - run: go test -race -count=1 ./...
+
+      - run: go vet ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
