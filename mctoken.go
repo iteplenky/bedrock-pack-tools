@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
-	"github.com/sandertv/gophertunnel/minecraft/service"
+	"github.com/iteplenky/gophertunnel/minecraft/service"
 	"golang.org/x/oauth2"
 )
 

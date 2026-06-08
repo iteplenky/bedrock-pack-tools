@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/sandertv/gophertunnel/minecraft/protocol"
-	"github.com/sandertv/gophertunnel/minecraft/service"
+	"github.com/iteplenky/gophertunnel/minecraft/protocol"
+	"github.com/iteplenky/gophertunnel/minecraft/service"
 	"golang.org/x/oauth2"
 )
 

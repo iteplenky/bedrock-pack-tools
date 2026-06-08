@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sandertv/gophertunnel/minecraft/auth"
+	"github.com/iteplenky/gophertunnel/minecraft/auth"
 	"golang.org/x/oauth2"
 )
 

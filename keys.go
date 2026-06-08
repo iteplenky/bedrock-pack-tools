@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sandertv/gophertunnel/minecraft"
-	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
+	"github.com/iteplenky/gophertunnel/minecraft"
+	"github.com/iteplenky/gophertunnel/minecraft/protocol/packet"
 )
 
 type keysTracker struct {

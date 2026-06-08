@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sandertv/gophertunnel/minecraft/resource"
+	"github.com/iteplenky/gophertunnel/minecraft/resource"
 )
 
 func zipDir(srcDir, dstPath string) (retErr error) {

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/sandertv/gophertunnel/minecraft/protocol"
-	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
+	"github.com/iteplenky/gophertunnel/minecraft/protocol"
+	"github.com/iteplenky/gophertunnel/minecraft/protocol/packet"
 )
 
 const (

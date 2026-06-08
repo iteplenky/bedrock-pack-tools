@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandertv/gophertunnel/minecraft/protocol"
+	"github.com/iteplenky/gophertunnel/minecraft/protocol"
 )
 
 const (
