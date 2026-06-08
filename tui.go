@@ -487,8 +487,21 @@ func (m appModel) beginJob() (appModel, tea.Cmd) {
 		m.statusLn = "Resolving address..."
 		return m, resolveJobCmd(m.fClient, *j.server)
 	}
+	m.markDecryptOut(j.address)
 	m.statusLn = "Starting..."
 	return m, runArgvCmd(m.act.args(j.address))
+}
+
+// markDecryptOut records where the current job's decrypted packs will land,
+// mirroring what the download child computes, so the Done summary can show
+// the exact path. Only meaningful for the download+decrypt action.
+func (m *appModel) markDecryptOut(addr string) {
+	if m.act != actionDownloadDecrypt {
+		return
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		m.jobs[m.jobIdx].outDir = decryptOutBase(cwd, addr)
+	}
 }
 
 func (m appModel) onResolved(msg resolvedMsg) (tea.Model, tea.Cmd) {
@@ -505,6 +518,7 @@ func (m appModel) onResolved(msg resolvedMsg) (tea.Model, tea.Cmd) {
 		return m.beginJob()
 	}
 	m.jobs[m.jobIdx].address = msg.address
+	m.markDecryptOut(msg.address)
 	m.statusLn = "Starting..."
 	return m, runArgvCmd(m.act.args(msg.address))
 }
@@ -528,7 +542,7 @@ func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	j := m.jobs[m.jobIdx]
-	m.results = append(m.results, jobResult{label: j.label, err: msg.err})
+	m.results = append(m.results, jobResult{label: j.label, err: msg.err, outDir: j.outDir})
 	if msg.err != nil {
 		m.logLines = append(m.logLines, "[err] "+msg.err.Error())
 	}
@@ -846,12 +860,15 @@ func (m appModel) doneView() string {
 	for _, r := range m.results {
 		if r.err != nil {
 			b.WriteString("  " + colorRed + "[err]" + colorReset + " " + r.label + " - " + r.err.Error() + "\n")
-		} else {
-			ok++
-			b.WriteString("  " + colorGreen + "[ok]" + colorReset + "  " + r.label + "\n")
+			continue
+		}
+		ok++
+		b.WriteString("  " + colorGreen + "[ok]" + colorReset + "  " + r.label + "\n")
+		if r.outDir != "" {
+			b.WriteString("        " + colorDim + "decrypted -> " + colorReset + m.truncate(r.outDir) + "\n")
 		}
 	}
-	fmt.Fprintf(&b, "\n  %d/%d succeeded · files saved in the current directory\n\n", ok, len(m.results))
+	fmt.Fprintf(&b, "\n  %d/%d succeeded · downloads in the current directory\n\n", ok, len(m.results))
 	b.WriteString(hintBar(hint{"any key", gRight + " menu"}))
 	return b.String()
 }
@@ -1073,7 +1090,12 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !st.decryptable() {
 				continue
 			}
-			jobs = append(jobs, job{label: d.Label, argv: []string{"decrypt", "--all", d.KeysFile, d.Dir}})
+			out := decryptOutBase(d.Dir, d.Address)
+			jobs = append(jobs, job{
+				label:  d.Label,
+				argv:   []string{"decrypt", "--all", d.KeysFile, d.Dir, out},
+				outDir: out,
+			})
 		}
 		if len(jobs) == 0 {
 			m.note = "nothing to decrypt - need both packs and a keys file (press g to fetch)"

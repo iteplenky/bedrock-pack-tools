@@ -229,7 +229,7 @@ func TestInspectDownload(t *testing.T) {
 }
 
 func TestAppModel_DecryptForwardBuildsDecryptJob(t *testing.T) {
-	d := download{Label: "srv", Dir: "/tmp/x", KeysFile: "/tmp/x/srv_keys.json"}
+	d := download{Label: "srv", Address: "srv:19132", Dir: "/tmp/x", KeysFile: "/tmp/x/srv_keys.json"}
 	m := appModel{
 		screen:   screenDecrypt,
 		dls:      []download{d},
@@ -242,9 +242,22 @@ func TestAppModel_DecryptForwardBuildsDecryptJob(t *testing.T) {
 	if am.screen != screenRunning || len(am.jobs) != 1 || cmd == nil {
 		t.Fatalf("decrypt enter: screen=%d jobs=%d cmd=%v", am.screen, len(am.jobs), cmd)
 	}
-	want := []string{"decrypt", "--all", d.KeysFile, d.Dir}
+	// The decrypt run is grouped by server and the destination is recorded.
+	wantOut := decryptOutBase(d.Dir, d.Address)
+	want := []string{"decrypt", "--all", d.KeysFile, d.Dir, wantOut}
 	if strings.Join(am.jobs[0].argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("decrypt job argv = %v, want %v", am.jobs[0].argv, want)
+	}
+	if am.jobs[0].outDir != wantOut {
+		t.Fatalf("job outDir = %q, want %q", am.jobs[0].outDir, wantOut)
+	}
+}
+
+func TestDecryptOutBase(t *testing.T) {
+	got := decryptOutBase("/packs", "play.example.net:19132")
+	want := filepath.Join("/packs", "decrypted", "play_example_net_19132")
+	if got != want {
+		t.Fatalf("decryptOutBase = %q, want %q", got, want)
 	}
 }
 

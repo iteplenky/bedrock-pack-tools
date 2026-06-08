@@ -37,7 +37,15 @@ const (
 	cdnConcurrency   = 6
 	cdnMaxRetries    = 3
 	progressThrottle = 100 * time.Millisecond
+	decryptedDir     = "decrypted"
 )
+
+// decryptOutBase is where a download's decrypted packs land, grouped by
+// server: <baseDir>/decrypted/<server>. Keeps multiple servers' decrypted
+// packs from mixing in one folder.
+func decryptOutBase(baseDir, server string) string {
+	return filepath.Join(baseDir, decryptedDir, sanitizeServerAddr(server))
+}
 
 // cdnInitialBackoff is var (not const) so tests can shrink it.
 var cdnInitialBackoff = 500 * time.Millisecond
@@ -507,7 +515,7 @@ Examples:
 		fmt.Printf("  Keys: %d -> %s\n", len(keys), keysFile)
 		if decrypt {
 			fmt.Println()
-			return decryptAll(keysFile, outDir, "")
+			return decryptAll(keysFile, outDir, decryptOutBase(outDir, server))
 		}
 		fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 	}

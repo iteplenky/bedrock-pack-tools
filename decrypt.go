@@ -182,7 +182,11 @@ func decryptAll(keysFile, packsDir, outBase string) error {
 	}
 
 	wg.Wait()
-	fmt.Printf("\n  Decrypted %d/%d packs -> %s\n", succeeded, len(jobs), outBase)
+	dest := outBase
+	if abs, err := filepath.Abs(outBase); err == nil {
+		dest = abs
+	}
+	fmt.Printf("\n  Decrypted %d/%d packs\n  Location: %s\n", succeeded, len(jobs), dest)
 	if succeeded == 0 {
 		return fmt.Errorf("all %d packs failed to decrypt", len(jobs))
 	}

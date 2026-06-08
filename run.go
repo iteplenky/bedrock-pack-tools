@@ -60,11 +60,13 @@ type job struct {
 	server  *franchise.Server // nil for a typed address
 	address string            // set when ready (typed, or after a resolve)
 	argv    []string          // when set, run verbatim instead of action.args
+	outDir  string            // where decrypted packs land, for the Done summary
 }
 
 type jobResult struct {
-	label string
-	err   error
+	label  string
+	err    error
+	outDir string
 }
 
 // runEvent is one line of child output. Transient lines (carriage-return

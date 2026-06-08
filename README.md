@@ -108,7 +108,9 @@ protocol-level pack transfer and the CDN-URL fallback that some
 servers use.
 
 `-d` / `--decrypt` decrypts the packs right after downloading, so you
-get ready-to-use folders in one step.
+get ready-to-use folders in one step. The decrypted packs land in
+`decrypted/<server>/` (grouped by server so multiple dumps don't mix);
+the command prints the exact location when it finishes.
 
 `-v` / `--verbose` prints all packet IDs for debugging handshake
 issues.
