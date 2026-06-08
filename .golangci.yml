@@ -1,0 +1,40 @@
+version: "2"
+
+# Deliberately small, high-signal linter set for a solo MIT CLI.
+# Run locally with: golangci-lint run ./...
+linters:
+  default: none
+  enable:
+    - errcheck # unchecked errors
+    - govet # suspicious constructs
+    - ineffassign # ineffectual assignments
+    - misspell # typos in comments/strings
+    - revive # naming / idiom
+    - staticcheck # bugs, simplifications, style
+    - unused # dead code
+  settings:
+    errcheck:
+      # Best-effort cleanup, deferred Close on consumed readers, and
+      # stderr writes - none of their errors are actionable.
+      exclude-functions:
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - (*github.com/iteplenky/gophertunnel/minecraft.Conn).Close
+        - os.Remove
+        - os.RemoveAll
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    revive:
+      rules:
+        # Noisy on the fixed gophertunnel callback / interface signatures.
+        - name: unused-parameter
+          disabled: true
+  exclusions:
+    rules:
+      # Test fixtures favour brevity over lint-perfect style.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - revive
+          - staticcheck

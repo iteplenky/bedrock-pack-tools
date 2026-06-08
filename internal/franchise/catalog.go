@@ -24,11 +24,11 @@ const (
 type Kind int
 
 const (
-	// KindPartnerDirect: inline url:port, plain RakNet.
+	// KindPartnerDirect is an inline url:port entry over plain RakNet.
 	KindPartnerDirect Kind = iota
-	// KindPartnerExperience: only experienceId; resolve via JoinExperience.
+	// KindPartnerExperience carries only an experienceId, resolved via JoinExperience.
 	KindPartnerExperience
-	// KindGathering: live event from /config/public; resolve via Venue.
+	// KindGathering is a live event from /config/public, resolved via Venue.
 	KindGathering
 )
 
