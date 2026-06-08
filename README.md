@@ -115,7 +115,7 @@ Batch mode matches encrypted packs to keys by the UUID in each pack's
 ### `encrypt` - encrypt resource packs
 
 ```bash
-bedrock-pack-tools encrypt <pack-dir> [key] [output.mcpack]
+bedrock-pack-tools encrypt [--key-out PATH] <pack-dir> [key] [output.mcpack]
 ```
 
 Packages a plain directory into a `.mcpack` plus a `.mcpack.key` beside
@@ -125,6 +125,10 @@ AES-256-CFB8 key; `manifest.json` and `pack_icon.png` are copied as-is
 
 If no key is supplied, a 32-character alphanumeric one is generated. If
 no output path is supplied, the `.mcpack` takes the directory's name.
+
+`--key-out PATH` (`-k PATH`) writes the master key to a path you choose
+instead of the default `<output.mcpack>.key` beside the pack - handy
+for keeping keys out of the directory you hand off.
 
 To deploy: drop the `.mcpack` and `.mcpack.key` into your Bedrock
 server's `resource_packs/` directory and register the pack the way your
@@ -234,9 +238,10 @@ scratch.
 
 ## Environment variables
 
-| Variable   | Effect                                                                          |
-| ---------- | ------------------------------------------------------------------------------- |
-| `NO_COLOR` | Disable all ANSI colors and escape codes ([no-color.org](https://no-color.org/)) |
+| Variable           | Effect                                                                          |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `NO_COLOR`         | Disable all ANSI colors and escape codes ([no-color.org](https://no-color.org/)) |
+| `BPT_DIAL_TIMEOUT` | Override the `keys` / `download` dial timeout, as a Go duration (`5m`, `90s`). Useful for slow servers or long pack-info waits. Gates only the initial server dial, not the per-pack CDN fetch. |
 
 ## Notes
 
