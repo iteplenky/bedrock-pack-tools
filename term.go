@@ -1,6 +1,10 @@
 package main
 
-import "os"
+import (
+	"os"
+
+	"github.com/charmbracelet/x/term"
+)
 
 var (
 	colorRed    = "\033[31m"
@@ -12,14 +16,22 @@ var (
 	clearLine   = "\r\033[K"
 )
 
+// disableANSI blanks every color and the clear-line escape so output is plain
+// text - for NO_COLOR and for redirected, non-terminal stdout.
+func disableANSI() {
+	colorRed, colorGreen, colorYellow, colorCyan, colorDim, colorReset = "", "", "", "", "", ""
+	clearLine = ""
+}
+
 func init() {
-	if os.Getenv("NO_COLOR") != "" {
-		colorRed = ""
-		colorGreen = ""
-		colorYellow = ""
-		colorCyan = ""
-		colorDim = ""
-		colorReset = ""
-		clearLine = ""
+	switch {
+	case os.Getenv("NO_COLOR") != "":
+		disableANSI()
+	case os.Getenv(quietAuthEnv) == "" && !term.IsTerminal(os.Stdout.Fd()):
+		// Redirected to a file/pipe: don't pollute it with escape codes. The
+		// interactive menu's child process (quietAuthEnv set) is exempt - its
+		// piped output uses the carriage-return progress protocol the parent
+		// parses, and the parent strips the color codes itself.
+		disableANSI()
 	}
 }
