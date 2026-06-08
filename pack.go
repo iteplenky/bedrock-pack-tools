@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
@@ -40,8 +41,7 @@ type keyEntry struct {
 	Name    string `json:"name"`
 }
 
-// keyStore manages a thread-safe collection of encryption keys
-// with automatic persistence to a JSON file.
+// keyStore is a thread-safe key collection that persists to JSON.
 type keyStore struct {
 	mu   sync.Mutex
 	keys map[string]keyEntry
@@ -55,11 +55,8 @@ func newKeyStore(file string) *keyStore {
 	}
 }
 
-// merge adds collected keys and persists the updated set to disk.
-// The disk write happens under the mutex so two concurrent merges can't
-// race and have the older snapshot overwrite the newer one — saveKeys
-// is a small json.Marshal + WriteFile (milliseconds), so blocking other
-// merges for that window is fine and merges are infrequent anyway.
+// merge adds keys and persists. Persist happens under the mutex so
+// concurrent merges can't overwrite each other's snapshot.
 func (ks *keyStore) merge(collected map[string]keyEntry) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
@@ -72,27 +69,25 @@ func (ks *keyStore) merge(collected map[string]keyEntry) {
 	}
 }
 
-// snapshot returns a copy of all stored keys.
 func (ks *keyStore) snapshot() map[string]keyEntry {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	return maps.Clone(ks.keys)
 }
 
-// count returns the number of stored keys.
 func (ks *keyStore) count() int {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	return len(ks.keys)
 }
 
-// parseResourcePacks decodes a raw ResourcePacksInfo payload
-// and returns the texture pack list. Recovers from panics caused
-// by malformed data in the protocol reader.
+// parseResourcePacks decodes a ResourcePacksInfo payload. recover()
+// catches protocol.Reader panics on malformed data and returns them
+// as errPackBadProtocol.
 func parseResourcePacks(payload []byte) (packs []protocol.TexturePackInfo, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("malformed ResourcePacksInfo payload: %v", r)
+			err = fmt.Errorf("%w: payload: %v", errPackBadProtocol, r)
 		}
 	}()
 	pk := &packet.ResourcePacksInfo{}
@@ -101,8 +96,8 @@ func parseResourcePacks(payload []byte) (packs []protocol.TexturePackInfo, err e
 	return pk.TexturePacks, nil
 }
 
-// sanitizeServerAddr replaces all non-alphanumeric characters with underscores.
-// Used for server addresses → safe file names.
+// sanitizeServerAddr maps non-alphanumeric to underscore for use in
+// filenames (server:port -> safe file stem).
 func sanitizeServerAddr(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
@@ -112,23 +107,26 @@ func sanitizeServerAddr(s string) string {
 	}, s)
 }
 
-// sanitizePackName keeps alphanumeric, dash, underscore; replaces spaces
-// with underscores; drops everything else. Used for pack directory names.
+// sanitizePackName preserves Unicode letters/digits so non-Latin pack
+// names ("Кириллический Pack", "日本語パック") survive. Spaces become
+// underscores; dashes and underscores are kept; everything else is dropped.
 func sanitizePackName(name string) string {
 	return strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
-			return r
-		}
-		if r == ' ' {
+		switch {
+		case r == ' ':
 			return '_'
+		case r == '_' || r == '-':
+			return r
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			return r
 		}
 		return -1
 	}, name)
 }
 
-// collectKeys extracts encryption keys from the raw ResourcePacksInfo packet.
-// Name is set to UUID because TexturePackInfo doesn't carry a human-readable
-// pack name — the real name is only available after full download via resource.Pack.
+// collectKeys extracts encryption keys from ResourcePacksInfo.
+// Name field is set to UUID because TexturePackInfo has no pack name -
+// the real name is only available post-download via resource.Pack.
 func collectKeys(packs []protocol.TexturePackInfo) map[string]keyEntry {
 	keys := make(map[string]keyEntry)
 	for _, tp := range packs {
@@ -147,7 +145,7 @@ func collectKeys(packs []protocol.TexturePackInfo) map[string]keyEntry {
 func readPackUUID(packDir string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(packDir, manifestJSON))
 	if err != nil {
-		return "", fmt.Errorf("read manifest.json: %w", err)
+		return "", fmt.Errorf("%w: read: %w", errPackBadManifest, err)
 	}
 	var manifest struct {
 		Header struct {
@@ -155,17 +153,16 @@ func readPackUUID(packDir string) (string, error) {
 		} `json:"header"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", fmt.Errorf("parse manifest.json: %w", err)
+		return "", fmt.Errorf("%w: parse: %w", errPackBadManifest, err)
 	}
 	if manifest.Header.UUID == "" {
-		return "", fmt.Errorf("manifest.json has no header.uuid")
+		return "", fmt.Errorf("%w: no header.uuid", errPackNoManifest)
 	}
 	return manifest.Header.UUID, nil
 }
 
-// readPackName returns the pack's human-readable name from manifest.json,
-// or "" if the manifest is missing, unparseable, or has no name. Used to
-// rename CDN-downloaded pack directories that initially used the UUID.
+// readPackName returns the pack name from manifest.json, or "".
+// Used to rename CDN-downloaded packs from UUID to human-readable.
 func readPackName(packDir string) string {
 	data, err := os.ReadFile(filepath.Join(packDir, manifestJSON))
 	if err != nil {

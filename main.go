@@ -24,13 +24,20 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 )
 
 var errUsage = errors.New("usage")
+
+// errPartialResult signals "produced useful output but not fully
+// done" - maps to exit 2 in main so CI can distinguish from success.
+// The command itself prints what landed.
+var errPartialResult = errors.New("partial result")
 
 var version = "dev"
 
@@ -63,11 +70,27 @@ func main() {
 	}
 
 	if err != nil {
-		if !errors.Is(err, errUsage) {
-			fmt.Fprintf(os.Stderr, "\n  %sError: %v%s\n", colorRed, err, colorReset)
-		}
-		os.Exit(1)
+		os.Exit(handleErr(os.Stderr, err))
 	}
+}
+
+// handleErr renders err and returns the exit code. Pulled out of main
+// so the classification is testable without os.Exit.
+func handleErr(w io.Writer, err error) int {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return 130 // SIGINT convention
+	case errors.Is(err, errUsage):
+		return 1 // usage already printed
+	case errors.Is(err, errPartialResult):
+		return 2 // summary already printed
+	}
+	if d, ok := humanize(err); ok {
+		writeDiagnostic(w, d, err)
+	} else {
+		writeRawError(w, err)
+	}
+	return 1
 }
 
 func printVersion() {
@@ -81,7 +104,7 @@ func printVersion() {
 }
 
 func printUsage() {
-	fmt.Println(`bedrock-pack-tools — dump, download, decrypt & encrypt Minecraft Bedrock resource packs
+	fmt.Println(`bedrock-pack-tools - dump, download, decrypt & encrypt Minecraft Bedrock resource packs
 
 Usage:
   bedrock-pack-tools keys     <server:port> [output.json]
@@ -98,7 +121,7 @@ Commands:
 
   download  Connect to a Bedrock server, download all resource packs, and extract
             them to disk. Also saves encryption keys. Packs are still encrypted
-            on disk — use 'decrypt' afterwards.
+            on disk - use 'decrypt' afterwards.
 
   decrypt   Decrypt an encrypted resource pack using a 32-character AES key,
             or batch-decrypt all packs matched by a keys.json file.

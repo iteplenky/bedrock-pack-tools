@@ -13,7 +13,6 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 )
 
-// zipDir creates a zip archive at dstPath from all files in srcDir.
 func zipDir(srcDir, dstPath string) (retErr error) {
 	f, err := os.Create(dstPath)
 	if err != nil {
@@ -60,24 +59,22 @@ func zipDir(srcDir, dstPath string) (retErr error) {
 	})
 }
 
-// extractResourcePack reads a gophertunnel resource.Pack into a zip archive
-// and extracts it to outDir.
 func extractResourcePack(pack *resource.Pack, outDir string) (int, error) {
 	size := pack.Len()
 	buf := make([]byte, size)
 	if _, err := pack.ReadAt(buf, 0); err != nil && err != io.EOF {
-		return 0, fmt.Errorf("read pack data: %w", err)
+		return 0, fmt.Errorf("%w: read: %w", errPackBadZip, err)
 	}
 
 	zr, err := zip.NewReader(bytes.NewReader(buf), int64(size))
 	if err != nil {
-		return 0, fmt.Errorf("open zip: %w", err)
+		return 0, fmt.Errorf("%w: zip: %w", errPackBadZip, err)
 	}
 	return extractZip(zr, outDir)
 }
 
-// extractZip writes all files from a zip.Reader into outDir, creating
-// subdirectories as needed. Returns the number of files written.
+// extractZip writes zr's files into outDir, blocking zip-slip via
+// the cleanBase prefix check.
 func extractZip(zr *zip.Reader, outDir string) (int, error) {
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return 0, err

@@ -21,10 +21,9 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
-// httpStatusErr is returned by fetchOnce when the server replies with a
-// non-200 status. Retryable() distinguishes transient failures (5xx,
-// 408, 429) from permanent ones (404, 403, ...) so the retry loop can
-// give up immediately on the latter.
+// httpStatusErr signals a non-200 CDN response. Retryable() lets the
+// retry loop abort early on permanent codes (404, 403) instead of
+// burning attempts on them.
 type httpStatusErr struct{ code int }
 
 func (e *httpStatusErr) Error() string { return fmt.Sprintf("HTTP %d", e.code) }
@@ -40,8 +39,7 @@ const (
 	progressThrottle = 100 * time.Millisecond
 )
 
-// cdnInitialBackoff is var, not const, so tests can shrink it from 500ms
-// to ~1ms and still exercise the retry path in milliseconds.
+// cdnInitialBackoff is var (not const) so tests can shrink it.
 var cdnInitialBackoff = 500 * time.Millisecond
 
 type downloadTracker struct {
@@ -61,10 +59,8 @@ type downloadTracker struct {
 	verbose       bool
 	httpClient    *http.Client
 
-	// connectSpinner runs from runDownload's "Connecting to X" phase
-	// until the first gophertunnel callback fires (Authenticated or
-	// onPackStart). Stop is idempotent so the safety stop after
-	// DialContext returns is harmless if a callback already stopped it.
+	// connectSpinner: stop is sync.Once-guarded so the post-Dial safety
+	// stop is a no-op if a callback already stopped it.
 	connectSpinner *spinner
 }
 
@@ -115,8 +111,7 @@ func (d *downloadTracker) onPacket(header packet.Header, payload []byte, src, ds
 		d.received += int64(len(payload))
 		received := d.received
 		elapsed := time.Since(d.startTime).Seconds()
-		// Chunk packets arrive at hundreds-per-second on a fast link;
-		// throttle the redraw so printf+lock contention doesn't dominate.
+		// Throttle redraw - chunks arrive at hundreds/sec on a fast link.
 		shouldPrint := time.Since(d.lastProgress) >= progressThrottle
 		if shouldPrint {
 			d.lastProgress = time.Now()
@@ -160,9 +155,7 @@ func (d *downloadTracker) onResourcePacksInfo(payload []byte) {
 }
 
 func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
-	// Cap parallel CDN downloads — without this a server advertising 50
-	// CDN packs would spawn 50 simultaneous HTTP requests and risk a
-	// rate-limit (or self-DDoS the CDN endpoint).
+	// Bound concurrent CDN downloads to avoid rate-limits / self-DDoS.
 	select {
 	case d.cdnSem <- struct{}{}:
 		defer func() { <-d.cdnSem }()
@@ -178,8 +171,8 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 		fmt.Fprintf(os.Stderr, "  %s[ERR]%s CDN download failed: %v\n", colorRed, colorReset, err)
 		return
 	}
-	// If the body was streamed but not consumed by the extract/save branch
-	// below, drop it. os.Remove on an already-renamed file is a no-op error.
+	// No-op on the rename-to-final-path branch below; cleans up the
+	// extract-to-dir branch where the tmp file isn't renamed.
 	defer os.Remove(tmpPath)
 
 	fmt.Printf("  %s[CDN]%s Downloaded %.1f KB\n", colorGreen, colorReset, float64(size)/1024)
@@ -210,8 +203,8 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 			fmt.Fprintf(os.Stderr, "  %s[ERR]%s Extract failed: %v\n", colorRed, colorReset, extractErr)
 			return
 		}
-		// TexturePackInfo carries no human-readable name; pull it from the
-		// extracted manifest so the dir matches protocol-downloaded packs.
+		// TexturePackInfo has no human-readable name; pull it from
+		// the extracted manifest so naming matches protocol downloads.
 		if name := readPackName(packDir); name != "" {
 			nicer := filepath.Join(d.outDir, sanitizePackName(name)+"_v"+tp.Version)
 			if nicer != packDir {
@@ -236,10 +229,9 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 	fmt.Printf("  %s[OK]%s  Saved as %s (%.1f KB)\n", colorCyan, colorReset, outFile, float64(size)/1024)
 }
 
-// fetchToTemp streams the URL's body to a temporary file in d.outDir
-// (so the later os.Rename to the final location is on the same FS) and
-// returns the temp path plus byte size. Retries cdnMaxRetries times with
-// exponential backoff on transient errors; honours d.ctx for cancel.
+// fetchToTemp streams the URL body to a tmp file inside d.outDir (so
+// the later os.Rename is on the same FS). Retries cdnMaxRetries times
+// with exponential backoff; honours d.ctx for cancel.
 func (d *downloadTracker) fetchToTemp(url string) (string, int64, error) {
 	backoff := cdnInitialBackoff
 	var lastErr error
@@ -252,8 +244,7 @@ func (d *downloadTracker) fetchToTemp(url string) (string, int64, error) {
 			return path, size, nil
 		}
 		lastErr = err
-		// 4xx (other than 408/429) is permanent — no point burning
-		// further attempts and backoff on a 404 or 403.
+		// 4xx (except 408/429) is permanent - abort instead of retrying.
 		var hse *httpStatusErr
 		if errors.As(err, &hse) && !hse.Retryable() {
 			return "", 0, err
@@ -304,10 +295,9 @@ func (d *downloadTracker) fetchOnce(url string) (string, int64, error) {
 	return f.Name(), n, nil
 }
 
-// isZipFile peeks the first 4 bytes for the standard zip local-file
-// signature (PK\x03\x04). Without this, a CDN that returns an HTML
-// error page with HTTP 200 would slip past zip.NewReader and get
-// saved as a bogus .mcpack.
+// isZipFile checks for the PK\x03\x04 local-file signature. Catches
+// CDN error pages served with HTTP 200 that would otherwise get saved
+// as a bogus .mcpack.
 func isZipFile(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -376,8 +366,7 @@ Examples:
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
-	// Honour Ctrl+C: cancel triggers DialContext + in-flight HTTP requests
-	// (via http.NewRequestWithContext) so partial files don't linger.
+	// Ctrl+C cancels DialContext and in-flight HTTP fetches.
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
 	ctx, cancel := context.WithTimeout(sigCtx, 5*time.Minute)
@@ -420,13 +409,13 @@ Examples:
 				fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 			}
 			fmt.Println()
-			return nil
+			return errPartialResult
 		}
 		if keyCount > 0 {
 			fmt.Printf("\n  Connection closed after %.1fs, but %d keys saved -> %s\n", elapsed.Seconds(), keyCount, keysFile)
 			fmt.Println("  Packs could not be downloaded (server didn't complete handshake).")
 			fmt.Println("  Use 'keys' command + local pack cache for this server.")
-			return nil
+			return errPartialResult
 		}
 		return fmt.Errorf("connection to %s failed: %w", server, err)
 	}
@@ -441,9 +430,7 @@ Examples:
 	fmt.Printf("  Downloaded %d packs (%.1f MB) in %.1fs\n\n",
 		len(packs), float64(totalReceived)/1024/1024, elapsed.Seconds())
 
-	// CDN downloads from onResourcePacksInfo run in their own goroutines.
-	// Wait for them so the final summary reflects everything that landed,
-	// and we don't kill in-flight transfers when main returns.
+	// Wait for in-flight CDN downloads spawned from onResourcePacksInfo.
 	tracker.cdnWg.Wait()
 
 	fmt.Println("  Extracting...")

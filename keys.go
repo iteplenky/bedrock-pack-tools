@@ -46,8 +46,7 @@ func (p *keysTracker) onResourcePacksInfo(payload []byte) {
 	packs, err := parseResourcePacks(payload)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
-		// Cancel anyway — ResourcePacksInfo arrives once per connection,
-		// so a parse failure means we have nothing to wait for.
+		// Cancel anyway - ResourcePacksInfo arrives once per connection.
 		if p.cancel != nil {
 			p.cancel()
 		}
@@ -130,7 +129,7 @@ Examples:
 			fmt.Printf("%s  Keys captured in %.1fs (%d packs on server)\n\n", clearLine, elapsed.Seconds(), totalPacks)
 			printKeys(keys)
 			fmt.Printf("\n  Saved %d keys -> %s\n\n", keyCount, outFile)
-			return nil
+			return errPartialResult
 		}
 		return fmt.Errorf("connection to %s failed: %w", server, err)
 	}

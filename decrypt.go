@@ -16,12 +16,12 @@ import (
 
 func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
 	if len(data) < contentsHeaderSize {
-		return nil, fmt.Errorf("contents.json too small (%d bytes)", len(data))
+		return nil, fmt.Errorf("%w: %d bytes", errPackTruncated, len(data))
 	}
 	encrypted := data[contentsHeaderSize:]
 	plaintext, err := cfb8.Decrypt(encrypted, []byte(packKey))
 	if err != nil {
-		return nil, fmt.Errorf("decrypt contents.json: %w", err)
+		return nil, fmt.Errorf("%w: %w", errPackWrongKey, err)
 	}
 	plaintext = bytes.TrimRight(plaintext, "\x00 \n\r\t")
 
@@ -31,7 +31,7 @@ func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
 		if len(preview) > 100 {
 			preview = preview[:100]
 		}
-		return nil, fmt.Errorf("parse contents.json: %w (first 100 bytes: %q)", err, preview)
+		return nil, fmt.Errorf("%w: parse failed (first 100 bytes: %q): %w", errPackWrongKey, preview, err)
 	}
 	return &contents, nil
 }
@@ -210,7 +210,13 @@ type fileResult struct {
 }
 
 func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
-	contentsData, err := os.ReadFile(filepath.Join(packDir, contentsJSON))
+	// Wrap missing contents.json in errPackNoManifest so humanize can
+	// explain "this isn't a pack folder" instead of a bare open error.
+	contentsPath := filepath.Join(packDir, contentsJSON)
+	if _, err := os.Stat(contentsPath); os.IsNotExist(err) {
+		return packStats{}, fmt.Errorf("%w: no contents.json at %s", errPackNoManifest, contentsPath)
+	}
+	contentsData, err := os.ReadFile(contentsPath)
 	if err != nil {
 		return packStats{}, fmt.Errorf("read contents.json: %w", err)
 	}

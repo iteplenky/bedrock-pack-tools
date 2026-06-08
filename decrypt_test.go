@@ -2,10 +2,26 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// TestDecryptPackInner_NoContentsJSON verifies the upfront validation:
+// pointing decrypt at a non-pack directory now returns errPackNoManifest,
+// which humanize translates into "isn't a valid resource pack" instead
+// of a bare "open: no such file" error.
+func TestDecryptPackInner_NoContentsJSON(t *testing.T) {
+	empty := t.TempDir()
+	_, err := decryptPackInner(empty, testMasterKey, t.TempDir())
+	if err == nil {
+		t.Fatal("expected error from empty pack dir, got nil")
+	}
+	if !errors.Is(err, errPackNoManifest) {
+		t.Errorf("err = %v, want chain to include errPackNoManifest", err)
+	}
+}
 
 func TestDecryptContentsJSON(t *testing.T) {
 	contents := contentsFile{

@@ -36,14 +36,14 @@ Examples:
 
 	packDir := args[0]
 	if _, err := os.Stat(filepath.Join(packDir, manifestJSON)); err != nil {
-		return fmt.Errorf("%s does not contain %s", packDir, manifestJSON)
+		return fmt.Errorf("%w: %s does not contain %s", errPackNoManifest, packDir, manifestJSON)
 	}
 
 	masterKey := ""
 	if len(args) >= 2 {
 		masterKey = args[1]
 		if len(masterKey) != 32 {
-			return fmt.Errorf("key must be exactly 32 characters, got %d", len(masterKey))
+			return fmt.Errorf("%w: got %d characters", errPackBadKeyLen, len(masterKey))
 		}
 	} else {
 		var err error
@@ -105,7 +105,7 @@ type encryptStats struct {
 
 func encryptPack(packDir, masterKey, outDir string) (encryptStats, error) {
 	if len(masterKey) != 32 {
-		return encryptStats{}, fmt.Errorf("master key must be exactly 32 characters, got %d", len(masterKey))
+		return encryptStats{}, fmt.Errorf("%w: got %d characters", errPackBadKeyLen, len(masterKey))
 	}
 
 	packUUID, err := readPackUUID(packDir)
