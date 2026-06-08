@@ -1,26 +1,39 @@
-# Bedrock Pack Tools
+# bedrock-pack-tools
 
 [![Release](https://img.shields.io/github/v/release/iteplenky/bedrock-pack-tools?logo=github&sort=semver)](https://github.com/iteplenky/bedrock-pack-tools/releases/latest)
 [![Test](https://github.com/iteplenky/bedrock-pack-tools/actions/workflows/test.yml/badge.svg)](https://github.com/iteplenky/bedrock-pack-tools/actions/workflows/test.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/iteplenky/bedrock-pack-tools/v3.svg)](https://pkg.go.dev/github.com/iteplenky/bedrock-pack-tools/v3)
 [![License: MIT](https://img.shields.io/github/license/iteplenky/bedrock-pack-tools)](LICENSE)
 
-**A Go CLI for working with Minecraft Bedrock resource packs:** dump
-encryption keys off a server, download and decrypt them, or re-encrypt
-your own. Works against Marketplace partner servers and Mojang's Live
-Events catalog.
+**Dump AES content keys, download, and decrypt Minecraft Bedrock encrypted
+resource packs from the command line.** A cross-platform Go CLI for security
+researchers, server operators auditing their own deployments, and pack authors
+recovering their own keys - pull the keys straight off a live Bedrock server
+over Xbox Live, no key needed up front, then turn encrypted `.mcpack` files
+into plain editable folders or re-encrypt your own.
 
-- **`keys`** - sign in via Xbox Live and pull AES content keys off a server
-- **`download`** - grab every pack a server ships in one command
-- **`decrypt`** - turn encrypted packs into plain editable directories
-- **`encrypt`** - package a plain pack into a deployable `.mcpack` + `.mcpack.key`
+- **`keys`** - sign in via Xbox Live and pull a server's AES content keys to a `keys.json`, no key needed up front
+- **`download`** - download every resource pack a Bedrock server ships, plus the keys, in one command (add `--decrypt` for ready-to-use folders)
+- **`decrypt`** - turn an encrypted `.mcpack` into a plain, editable directory
+- **`encrypt`** - package a plain resource pack into a deployable `.mcpack` + `.mcpack.key`
 - **`featured`** - browse and download from Minecraft's Featured Servers / Live Events catalog
 - **`version`** - print the build version
-- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `IP:PORT` yourself, pick an action (download, download + decrypt, or keys only), and watch live progress without leaving the menu - pause with `p`, cancel with `esc`, and run again when it's done
+- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `host:port`, pick an action (download, download + decrypt, or keys only), and watch live progress - pause with `p`, cancel with `esc`
 
 **Scope.** Built for researchers, server operators auditing their own
 deployments, and pack authors recovering their own keys. Not for
 redistributing someone else's paid content.
+
+## What it does in one command
+
+```bash
+# Download every encrypted pack a server ships, then decrypt them, in one step:
+bedrock-pack-tools download --decrypt play.example.net:19132
+```
+
+You get plain, editable pack folders plus a `keys.json` (UUID to AES key) -
+ready to inspect, diff, or re-pack. Run with no arguments for an interactive
+menu instead.
 
 ## Installation
 
@@ -84,7 +97,7 @@ Or from the command line:
 
 ## Commands
 
-### `keys` - dump encryption keys
+### `keys` - dump a Bedrock server's encryption keys
 
 ```bash
 bedrock-pack-tools keys <server:port> [output.json]
@@ -97,7 +110,7 @@ becomes `play_example_net_19132_keys.json`).
 Use this when you already have the encrypted packs on disk and just
 need keys; otherwise `download` does both at once.
 
-### `download` - download resource packs
+### `download` - download resource packs from a Bedrock server
 
 ```bash
 bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
@@ -119,7 +132,7 @@ issues.
 Without `--decrypt` the downloaded packs are still encrypted; the tool
 prints the exact `decrypt --all` command to run next.
 
-### `decrypt` - decrypt resource packs
+### `decrypt` - decrypt encrypted resource packs
 
 ```bash
 # Single pack with a known key
@@ -134,7 +147,7 @@ Batch mode matches encrypted packs to keys by the UUID in each pack's
 32-character AES master key; per-file keys live inside the encrypted
 `contents.json`.
 
-### `encrypt` - encrypt resource packs
+### `encrypt` - encrypt a resource pack into a `.mcpack`
 
 ```bash
 bedrock-pack-tools encrypt [--key-out PATH] <pack-dir> [key] [output.mcpack]
@@ -234,6 +247,46 @@ first 16 bytes of the 32-byte key.
 The decrypted JSON lists every file in the pack with its own per-file
 key. `manifest.json` and `pack_icon.png` appear with empty keys and
 are stored unencrypted.
+
+## FAQ
+
+**How do I decrypt a Minecraft Bedrock resource pack?**
+If you already have the 32-character key, run `decrypt <pack-dir> <key>`. If you
+have a `keys.json` from `keys` or `download`, run `decrypt --all <keys.json>
+<packs-dir>` to batch-decrypt every pack at once - it matches packs to keys by
+the UUID in each `manifest.json`. Decrypt only packs you own or are authorized
+to audit.
+
+**How do I get the encryption key for a Bedrock resource pack?**
+The `keys` command signs in via Xbox Live and pulls the AES content keys
+straight off a server you run or are authorized to audit, so you don't need the
+key ahead of time. The output is a UUID-to-key map you can feed to
+`decrypt --all`.
+
+**How do I download every resource pack from a Bedrock server?**
+Run `download <server:port>` to fetch every pack the server ships plus its keys
+file in one command. Add `--decrypt` to get ready-to-use, decrypted folders in
+the same step.
+
+**How do I convert a `.mcpack` to a `.zip`?**
+A `.mcpack` is a zip archive - rename the extension to `.zip` and extract it. If
+the contents are encrypted (a binary `contents.json` header), run `decrypt` with
+the matching key first to get plain files.
+
+**What is the 32-character key, and where do the per-file keys live?**
+It's the AES-256 master key for the pack. The per-file keys live inside the
+pack's encrypted `contents.json`; the tool reads them automatically once it has
+the master key. The IV is the first 16 bytes of the 32-byte key.
+
+**Can I re-encrypt my own pack into a `.mcpack`?**
+Yes. `encrypt <pack-dir>` packages a plain directory into a `.mcpack` plus a
+`.mcpack.key`, generating a fresh 32-character AES-256-CFB8 key per file. Drop
+both into your server's `resource_packs/` directory to deploy.
+
+**Is this allowed?**
+It's built for security researchers, server operators auditing their own
+deployments, and pack authors recovering their own keys. Don't use it to
+redistribute someone else's paid content.
 
 ## Troubleshooting
 
