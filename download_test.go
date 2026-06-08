@@ -236,6 +236,23 @@ func TestFetchToTemp_429Retries(t *testing.T) {
 	}
 }
 
+// TestSanitizeVersion: a wire-supplied pack version must not carry path
+// separators into the output dir name. Dots stay (so "1.2.3" is readable);
+// with separators gone, a literal ".." can't traverse.
+func TestSanitizeVersion(t *testing.T) {
+	cases := map[string]string{
+		"1.2.3":          "1.2.3",
+		"v2.0.56":        "v2.0.56",
+		"1.0/../../evil": "1.0....evil",
+		`1\x`:            "1x",
+	}
+	for in, want := range cases {
+		if got := sanitizeVersion(in); got != want {
+			t.Errorf("sanitizeVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestFetchToTemp_CtxCancelDuringBackoff(t *testing.T) {
 	// Use a longer backoff so we have a clear window to cancel inside.
 	old := cdnInitialBackoff

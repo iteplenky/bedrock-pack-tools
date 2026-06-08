@@ -70,6 +70,68 @@ func TestDecryptContentsJSON_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestDecryptContentsJSON_WrongKey is the most common real-world failure:
+// CFB8 is unauthenticated, so a wrong key yields garbage; the only guard is
+// the JSON unmarshal, which must surface as errPackWrongKey.
+func TestDecryptContentsJSON_WrongKey(t *testing.T) {
+	payload, _ := json.Marshal(contentsFile{Content: []contentsEntry{{Path: "a.txt"}}})
+	ciphertext := mustEncrypt(t, payload, []byte(testMasterKey))
+	data := append(make([]byte, contentsHeaderSize), ciphertext...)
+
+	_, err := decryptContentsJSON(data, "ZYXWVUTSRQPONMLKJIHGFEDCBA654321") // valid length, wrong key
+	if !errors.Is(err, errPackWrongKey) {
+		t.Fatalf("err = %v, want chain to include errPackWrongKey", err)
+	}
+}
+
+// TestDecryptPackFiles_PathEscapeSkipped pins the zip-slip guard: a malicious
+// contents.json entry pointing outside outDir must be skipped, not written.
+func TestDecryptPackFiles_PathEscapeSkipped(t *testing.T) {
+	tmp := t.TempDir()
+	packDir := filepath.Join(tmp, "pack")
+	outDir := filepath.Join(tmp, "out")
+	os.MkdirAll(packDir, 0o755)
+	os.MkdirAll(outDir, 0o755)
+	os.WriteFile(filepath.Join(packDir, "safe.txt"), []byte("ok"), 0o644)
+
+	stats := decryptPackFiles(packDir, outDir, []contentsEntry{
+		{Path: "../escape.txt", Key: ""},
+		{Path: "safe.txt", Key: ""},
+	})
+
+	if _, err := os.Stat(filepath.Join(tmp, "escape.txt")); !os.IsNotExist(err) {
+		t.Fatalf("path-escaping entry was written outside outDir (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "safe.txt")); err != nil {
+		t.Fatalf("safe file should still be written: %v", err)
+	}
+	if stats.errors != 1 {
+		t.Errorf("escaping entry should count as 1 error, got %d", stats.errors)
+	}
+}
+
+// TestProcessFile_WrongKeyNoValidation documents the unauthenticated-cipher
+// contract: a wrong per-file key writes garbage with no error. A future
+// user-supplied-key feature would need to add validation - this is the tripwire.
+func TestProcessFile_WrongKeyNoValidation(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	os.MkdirAll(src, 0o755)
+	plaintext := []byte("the original secret bytes here!!")
+	ciphertext := mustEncrypt(t, plaintext, []byte(testMasterKey))
+	os.WriteFile(filepath.Join(src, "data.bin"), ciphertext, 0o644)
+
+	entry := contentsEntry{Path: "data.bin", Key: "ZYXWVUTSRQPONMLKJIHGFEDCBA654321"}
+	dec, err := processFile(entry, filepath.Join(src, "data.bin"), filepath.Join(tmp, "out", "data.bin"))
+	if err != nil || !dec {
+		t.Fatalf("wrong key should still report decrypted with no error: dec=%v err=%v", dec, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(tmp, "out", "data.bin"))
+	if len(got) == 0 || string(got) == string(plaintext) {
+		t.Errorf("expected non-empty garbage differing from plaintext, got %q", got)
+	}
+}
+
 func TestDecryptContentsJSON_TrailingNulls(t *testing.T) {
 	contents := contentsFile{Content: []contentsEntry{{Path: "a.txt", Key: ""}}}
 	payload, _ := json.Marshal(contents)

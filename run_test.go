@@ -154,6 +154,22 @@ func TestProcessControl(t *testing.T) {
 	}
 }
 
+// TestInterpretExit_SignalKill pins that a signal-terminated child (exit -1,
+// the cancel path) maps to an error - distinct from the exit-2 soft success.
+func TestInterpretExit_SignalKill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal kill")
+	}
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = killProcess(cmd.Process)
+	if interpretExit(cmd.Wait()) == nil {
+		t.Error("signal-killed child (-1) should map to an error")
+	}
+}
+
 func TestInterpretExit(t *testing.T) {
 	if interpretExit(nil) != nil {
 		t.Error("nil should stay nil")

@@ -3,12 +3,14 @@ package franchise
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------- versionInRange / compareDotted ----------
@@ -221,6 +223,40 @@ func TestFetchGatherings_Decode(t *testing.T) {
 	}
 	if got[0].Kind != KindGathering {
 		t.Errorf("got[0].Kind = %v, want KindGathering", got[0].Kind)
+	}
+}
+
+// TestFetchGatherings_TimeWindow exercises the StartTimeUtc/EndTimeUtc guards:
+// a future start or a past end drops the event; an open window or an unset
+// (zero) time keeps it.
+func TestFetchGatherings_TimeWindow(t *testing.T) {
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	resp := fmt.Sprintf(`{"status":"OK","code":200,"result":[
+		{"gatheringId":"future","title":"Not yet","isEnabled":true,"startTimeUtc":%q},
+		{"gatheringId":"ended","title":"Over","isEnabled":true,"endTimeUtc":%q},
+		{"gatheringId":"open","title":"Open","isEnabled":true,"startTimeUtc":%q,"endTimeUtc":%q},
+		{"gatheringId":"unbounded","title":"Always","isEnabled":true}
+	]}`, future, past, past, future)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, resp)
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+
+	got, err := liveEvents(context.Background(), u, "MCToken x")
+	if err != nil {
+		t.Fatalf("liveEvents: %v", err)
+	}
+	kept := map[string]bool{}
+	for _, s := range got {
+		kept[s.GatheringID] = true
+	}
+	if !kept["open"] || !kept["unbounded"] {
+		t.Errorf("open + unbounded should be kept, got %+v", got)
+	}
+	if kept["future"] || kept["ended"] {
+		t.Errorf("future/ended should be dropped, got %+v", got)
 	}
 }
 

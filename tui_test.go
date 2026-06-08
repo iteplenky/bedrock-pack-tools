@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
@@ -273,6 +276,59 @@ func TestAppModel_DecryptNotDecryptableShowsNote(t *testing.T) {
 	am := tm.(appModel)
 	if am.screen != screenDecrypt || am.note == "" || len(am.jobs) != 0 {
 		t.Fatalf("non-decryptable enter: screen=%d note=%q jobs=%d", am.screen, am.note, len(am.jobs))
+	}
+}
+
+func TestAppModel_CancelFinishDoesNotRecordFailure(t *testing.T) {
+	// A user-cancelled run's killed child reports exit -1; that must not be
+	// recorded as a failed result or persist a "failed" status.
+	m := appModel{
+		screen:   screenRunning,
+		canceled: true,
+		jobs:     []job{{label: "a", address: "a:1"}},
+		jobIdx:   0,
+		store:    store{},
+	}
+	var tm tea.Model = m
+	tm, _ = tm.Update(jobFinishedMsg{err: errors.New("exited with code -1")})
+	am := tm.(appModel)
+	if am.screen != screenDone {
+		t.Fatalf("cancel-finish should go to the summary, got screen %d", am.screen)
+	}
+	if len(am.results) != 0 {
+		t.Errorf("cancelled job should not be recorded: %+v", am.results)
+	}
+	if _, ok := am.store.Status["a:1"]; ok {
+		t.Error("cancelled job should not persist a status")
+	}
+}
+
+func TestRecentStatusLabel(t *testing.T) {
+	m := appModel{store: store{Status: map[string]recentStatus{
+		"a:1": {OK: true, LastUsed: time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)},
+		"b:2": {OK: false, LastUsed: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)},
+	}}}
+	if got := m.recentStatusLabel("a:1"); !strings.Contains(got, "ok") || !strings.Contains(got, "·") {
+		t.Errorf("ok label = %q, want it to contain ok + the separator", got)
+	}
+	if got := m.recentStatusLabel("b:2"); !strings.Contains(got, "failed") {
+		t.Errorf("failed label = %q", got)
+	}
+	if got := m.recentStatusLabel("missing"); got != "" {
+		t.Errorf("unknown address label = %q, want empty", got)
+	}
+}
+
+func TestResolveAddress_NoNetworkBranches(t *testing.T) {
+	ctx := context.Background()
+	// Direct partner: no client needed, returns host:port inline.
+	addr, err := resolveAddress(ctx, nil, franchise.Server{Kind: franchise.KindPartnerDirect, Host: "h", Port: 1})
+	if err != nil || addr != "h:1" {
+		t.Fatalf("direct: addr=%q err=%v", addr, err)
+	}
+	// Unknown kind errors instead of panicking.
+	if _, err := resolveAddress(ctx, nil, franchise.Server{Kind: franchise.Kind(99), Name: "x"}); err == nil {
+		t.Error("unknown kind should error")
 	}
 }
 
