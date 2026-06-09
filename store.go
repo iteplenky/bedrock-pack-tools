@@ -153,6 +153,21 @@ func (s *store) removeDownload(d download) {
 	s.persist()
 }
 
+// clearAddresses forgets the saved + recent lists (persist's pruneStatus then
+// drops the per-address status too).
+func (s *store) clearAddresses() {
+	s.Recent = nil
+	s.Saved = nil
+	s.persist()
+}
+
+// clearDownloads forgets where past downloads landed. It does not touch any
+// packs or keys on disk - only the servers.json record.
+func (s *store) clearDownloads() {
+	s.Downloads = nil
+	s.persist()
+}
+
 func nowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // ageLabel renders a compact "5m ago" for an RFC3339 stamp, or "" if unset.

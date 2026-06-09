@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,33 @@ import (
 )
 
 const deviceIDFileName = ".device_id"
+
+// configDir is the per-OS directory holding the token caches and servers.json,
+// or ok=false when it can't be resolved.
+func configDir() (string, bool) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(dir, "bedrock-pack-tools"), true
+}
+
+// resetDeviceID deletes the persisted PlayFab device.ID so the next mint rolls
+// a fresh one (re-rolling the featured cohort). A missing file is not an error.
+func resetDeviceID() error {
+	p, err := deviceIDPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// Drop the cached MCToken too: the cohort treatments are baked into the
+	// minted token, so a fresh device.ID has no visible effect until the next
+	// mint goes through PlayFab.
+	dropMCToken()
+	return nil
+}
 
 // deviceIDPath returns the on-disk persistence path for the stable
 // PlayFab device identifier. Falls back to an empty string + error

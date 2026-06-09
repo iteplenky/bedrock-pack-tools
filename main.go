@@ -84,6 +84,10 @@ func main() {
 		err = runEncrypt(os.Args[2:])
 	case "featured":
 		err = runFeatured(os.Args[2:])
+	case "login":
+		err = runLogin(os.Args[2:])
+	case "logout":
+		err = runLogout(os.Args[2:])
 	case "version", "-v", "--version":
 		printVersion()
 	case "help", "-h", "--help":
@@ -139,6 +143,8 @@ Usage:
   bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
   bedrock-pack-tools encrypt  [--key-out PATH] <pack-dir> [key] [output.mcpack]
   bedrock-pack-tools featured [download <index> [output-dir]]
+  bedrock-pack-tools login
+  bedrock-pack-tools logout
   bedrock-pack-tools version
 
 Environment:
@@ -162,6 +168,9 @@ Commands:
 
   featured  List the Featured Servers and Live Events from Minecraft's
             client-discovery API and optionally download one by index.
+
+  login     Sign in via Xbox Live (device code flow) and cache the token.
+  logout    Remove the cached Xbox + franchise tokens.
 
   version   Show version information.
 

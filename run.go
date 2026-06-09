@@ -202,9 +202,13 @@ func splitStream(r io.Reader, emit func(runEvent)) {
 // cancel (kill) work without weaving stop-gates through the networking and
 // decrypt code, and the tested CLI path runs byte-for-byte. The Xbox token
 // is already cached by runTUI's up-front auth, so the child never prompts.
+// selfExe is the path to this binary, re-execed for run jobs and the
+// interactive login handover.
+func selfExe() (string, error) { return os.Executable() }
+
 func runArgvCmd(argv []string) tea.Cmd {
 	return func() tea.Msg {
-		self, err := os.Executable()
+		self, err := selfExe()
 		if err != nil {
 			return jobFinishedMsg{err: fmt.Errorf("locate binary: %w", err)}
 		}
@@ -255,6 +259,24 @@ func streamChild(cmd *exec.Cmd, pr *io.PipeReader, pw *io.PipeWriter, ch chan te
 // waitRun pulls the next message off a running job's channel.
 func waitRun(ch chan tea.Msg) tea.Cmd {
 	return func() tea.Msg { return <-ch }
+}
+
+// loginDoneMsg fires after the re-execed `login` child finishes.
+type loginDoneMsg struct{ err error }
+
+// loginCmd re-execs `self login` with the terminal handed to it via
+// tea.ExecProcess, so the device-code URL + code print and the poll run on the
+// real TTY; bubbletea restores the menu's alt-screen when it returns. The
+// child gets a normal interactive env (quietAuthEnv stripped) since it writes
+// straight to the terminal, not through our capture pipe.
+func loginCmd() tea.Cmd {
+	self, err := selfExe()
+	if err != nil {
+		return func() tea.Msg { return loginDoneMsg{err: err} }
+	}
+	c := exec.Command(self, "login")
+	c.Env = envWithout(os.Environ(), quietAuthEnv)
+	return tea.ExecProcess(c, func(err error) tea.Msg { return loginDoneMsg{err: err} })
 }
 
 // resolveJobCmd turns a featured row into a host:port off the main loop. The

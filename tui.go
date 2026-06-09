@@ -62,10 +62,13 @@ const (
 	screenSaved
 	screenRecent
 	screenDecrypt // decrypt packs from remembered download locations
+	screenEncrypt // encrypt a local pack folder into a .mcpack
 	screenAddress
-	screenAction  // pick download / download+decrypt / keys for the chosen targets
-	screenRunning // a job queue executing, with live output
-	screenDone    // per-target summary, any key returns to the menu
+	screenAccount  // sign in / out of Xbox Live
+	screenSettings // maintenance actions
+	screenAction   // pick download / download+decrypt / keys for the chosen targets
+	screenRunning  // a job queue executing, with live output
+	screenDone     // per-target summary, any key returns to the menu
 )
 
 // section is one row of the main menu, with a help line shown when it's
@@ -86,6 +89,9 @@ var sections = []section{
 	{"Saved servers", "Addresses you saved for quick re-use.", screenSaved, 1},
 	{"Recent addresses", "Addresses you entered recently, with their last result.", screenRecent, 1},
 	{"Decrypt packs", "Decrypt packs you've downloaded - or fetch what's missing.", screenDecrypt, 2},
+	{"Encrypt a pack", "Package a local pack folder into a .mcpack + .mcpack.key.", screenEncrypt, 2},
+	{"Account", "Sign in or out of Xbox Live.", screenAccount, 3},
+	{"Settings", "Clear saved data and downloads, or reset the featured cohort.", screenSettings, 3},
 }
 
 func sectionTitle(target screen) string {
@@ -95,6 +101,57 @@ func sectionTitle(target screen) string {
 		}
 	}
 	return ""
+}
+
+// confirmKind identifies a pending y/n confirmation (a destructive account or
+// settings action). confirmNone means nothing is pending.
+type confirmKind int
+
+const (
+	confirmNone confirmKind = iota
+	confirmLogout
+	confirmClearAddrs
+	confirmClearDownloads
+	confirmResetCohort
+)
+
+func confirmPrompt(k confirmKind) string {
+	switch k {
+	case confirmLogout:
+		return "Forget the cached sign-in?"
+	case confirmClearAddrs:
+		return "Clear saved and recent addresses?"
+	case confirmClearDownloads:
+		return "Forget download history? (packs on disk are kept)"
+	case confirmResetCohort:
+		return "Reset the featured cohort? (a new device id is generated)"
+	}
+	return ""
+}
+
+// accountChoice is a row on the Account screen.
+type accountChoice struct {
+	label string
+	desc  string
+	login bool // true = Log in, false = Log out
+}
+
+var accountChoices = []accountChoice{
+	{"Log in", "Run Xbox device sign-in - a URL and code will appear.", true},
+	{"Log out", "Forget the cached Xbox token and franchise session.", false},
+}
+
+// settingsItem is a row on the Settings screen; each arms a y/n confirm.
+type settingsItem struct {
+	label   string
+	desc    string
+	confirm confirmKind
+}
+
+var settingsItems = []settingsItem{
+	{"Clear saved and recent", "Forget your saved servers and recent addresses.", confirmClearAddrs},
+	{"Clear download history", "Forget where past downloads landed (packs on disk are kept).", confirmClearDownloads},
+	{"Reset featured cohort", "Roll a new device id - the featured list may change.", confirmResetCohort},
 }
 
 // runLogTail is how many committed output lines the running screen shows.
@@ -120,10 +177,16 @@ type appModel struct {
 
 	featured          tuiModel      // featured-list state (screenFeatured)
 	list              addrListModel // saved/recent/decrypt cursor + selection
-	addr              addrModel
+	addr              textField     // screenAddress input
+	enc               textField     // screenEncrypt pack-path input
 	loadErr           error
 	resolvingFeatured bool   // a ^r bulk experience/event resolve is in flight
 	note              string // transient confirmation (e.g. "saved"), cleared on next key
+
+	// account / settings cursors + a shared y/n confirm for destructive actions.
+	accountCursor  int
+	settingsCursor int
+	confirm        confirmKind
 
 	// decrypt section: remembered downloads + their live on-disk state,
 	// index-aligned. m.list (cursor/selection) indexes both.
@@ -251,6 +314,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.featured.applyFilter()
 		}
 		return m, nil
+	case loginDoneMsg:
+		if msg.err == nil && loadToken() != nil {
+			if ts, err := getTokenSource(); err == nil {
+				m.ts = ts // refresh the in-process source after a fresh sign-in
+			}
+			m.note = "signed in"
+		} else {
+			m.note = "sign-in did not complete"
+		}
+		return m, nil
 	case resolvedMsg:
 		return m.onResolved(msg)
 	case jobStartedMsg:
@@ -284,6 +357,13 @@ func (m appModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	m.note = "" // any key clears a transient confirmation; setters re-set it below
+	if m.confirm != confirmNone {
+		if key.String() == "y" {
+			return m.runConfirmed()
+		}
+		m.confirm = confirmNone // n / esc / any other key cancels
+		return m, nil
+	}
 	switch m.screen {
 	case screenMenu:
 		return m.handleMenuKey(key)
@@ -299,8 +379,14 @@ func (m appModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleListKey(key, true)
 	case screenDecrypt:
 		return m.handleDecryptKey(key)
+	case screenEncrypt:
+		return m.handleEncryptKey(key)
 	case screenAddress:
 		return m.handleAddressKey(key)
+	case screenAccount:
+		return m.handleAccountKey(key)
+	case screenSettings:
+		return m.handleSettingsKey(key)
 	case screenAction:
 		return m.handleActionKey(key)
 	case screenRunning:
@@ -335,6 +421,13 @@ func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch sections[m.menuCursor].target {
 		case screenFeatured:
 			m.loadErr = nil
+			if m.ts == nil { // signed out: nothing to authenticate the catalog fetch
+				m.accountCursor = 0
+				m.confirm = confirmNone
+				m.note = "sign in first to browse featured servers"
+				m.screen = screenAccount
+				return m, nil
+			}
 			if m.fServers != nil { // reuse the catalog from an earlier visit
 				m.featured = newTUIModel(m.fServers)
 				m.screen = screenFeatured
@@ -350,9 +443,20 @@ func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenRecent
 		case screenDecrypt:
 			m.openDecrypt()
+		case screenEncrypt:
+			m.enc = textField{}
+			m.screen = screenEncrypt
 		case screenAddress:
-			m.addr = addrModel{}
+			m.addr = textField{}
 			m.screen = screenAddress
+		case screenAccount:
+			m.accountCursor = 0
+			m.confirm = confirmNone
+			m.screen = screenAccount
+		case screenSettings:
+			m.settingsCursor = 0
+			m.confirm = confirmNone
+			m.screen = screenSettings
 		}
 	}
 	return m, nil
@@ -499,12 +603,142 @@ func (m appModel) handleActionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m appModel) handleAccountKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up":
+		if m.accountCursor > 0 {
+			m.accountCursor--
+		}
+	case "down":
+		if m.accountCursor < len(accountChoices)-1 {
+			m.accountCursor++
+		}
+	}
+	switch {
+	case back(key):
+		m.screen = screenMenu
+	case forward(key):
+		if accountChoices[m.accountCursor].login {
+			return m, loginCmd() // hands the terminal to the device-code flow
+		}
+		m.confirm = confirmLogout
+	}
+	return m, nil
+}
+
+func (m appModel) handleSettingsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up":
+		if m.settingsCursor > 0 {
+			m.settingsCursor--
+		}
+	case "down":
+		if m.settingsCursor < len(settingsItems)-1 {
+			m.settingsCursor++
+		}
+	}
+	switch {
+	case back(key):
+		m.screen = screenMenu
+	case forward(key):
+		m.confirm = settingsItems[m.settingsCursor].confirm
+	}
+	return m, nil
+}
+
+// runConfirmed performs the action the pending y/n confirm was guarding.
+func (m appModel) runConfirmed() (tea.Model, tea.Cmd) {
+	switch m.confirm {
+	case confirmLogout:
+		wasSignedIn := loadToken() != nil
+		if err := clearAuthCaches(); err != nil {
+			m.note = "logout failed: " + err.Error()
+		} else {
+			// Drop the in-memory session too, not just the disk caches: the
+			// refresh-token source and franchise client would otherwise keep
+			// minting tokens (silently re-writing the cache we just deleted).
+			m.ts = nil
+			m.fClient = nil
+			m.fServers = nil
+			m.featured = tuiModel{}
+			if wasSignedIn {
+				m.note = "signed out"
+			} else {
+				m.note = "already signed out"
+			}
+		}
+	case confirmClearAddrs:
+		m.store.clearAddresses()
+		m.note = "cleared saved and recent"
+	case confirmClearDownloads:
+		m.store.clearDownloads()
+		m.note = "cleared download history"
+	case confirmResetCohort:
+		if err := resetDeviceID(); err != nil {
+			m.note = "reset failed: " + err.Error()
+		} else {
+			m.note = "featured cohort reset"
+		}
+	}
+	m.confirm = confirmNone
+	return m, nil
+}
+
+func (m appModel) handleEncryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.screen = screenMenu
+	case "left":
+		if m.enc.value == "" {
+			m.screen = screenMenu
+		} else if m.enc.cursor > 0 {
+			m.enc.cursor--
+		}
+	case "right":
+		if m.enc.cursor < len([]rune(m.enc.value)) {
+			m.enc.cursor++
+		}
+	case "enter":
+		path, err := validatePackDir(m.enc.value)
+		if err != nil {
+			m.enc.err = err.Error()
+		} else {
+			return m.startRun([]job{{label: filepath.Base(path), argv: []string{"encrypt", path}}}, actionDownload)
+		}
+	case "backspace":
+		m.enc.deleteBack()
+	default:
+		if key.Type == tea.KeyRunes {
+			m.enc.insert(string(key.Runes))
+		}
+	}
+	return m, nil
+}
+
+// validatePackDir mirrors the encrypt command's entry guard (the path must be a
+// folder holding a manifest.json), so an obviously bad path is caught in-menu.
+// Deeper checks - a valid header.uuid, at least one encryptable file - run in
+// the child and surface on the Done screen.
+func validatePackDir(s string) (string, error) {
+	s = strings.TrimRight(strings.TrimSpace(s), "/\\")
+	if s == "" {
+		return "", fmt.Errorf("enter a path to a pack folder")
+	}
+	if fi, err := os.Stat(s); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("not a folder - point at a resource-pack directory")
+	}
+	if _, err := os.Stat(filepath.Join(s, manifestJSON)); err != nil {
+		return "", fmt.Errorf("no manifest.json there - point at a resource-pack directory")
+	}
+	return s, nil
+}
+
 // startRun resets the live state and kicks off the queue of jobs.
 func (m appModel) startRun(jobs []job, act action) (appModel, tea.Cmd) {
-	// Runs launched straight from the decrypt section set their own
+	// Runs launched straight from the decrypt/encrypt sections set their own
 	// breadcrumb origin (the action picker already set actionFrom otherwise).
-	if m.screen == screenDecrypt {
-		m.actionFrom = screenDecrypt
+	if m.screen == screenDecrypt || m.screen == screenEncrypt {
+		m.actionFrom = m.screen
 	}
 	m.jobs = jobs
 	m.act = act
@@ -730,8 +964,14 @@ func (m appModel) View() string {
 		return m.listView("No recent addresses yet - enter one from the address screen.", true)
 	case screenDecrypt:
 		return m.decryptView()
+	case screenEncrypt:
+		return m.encryptView()
 	case screenAddress:
 		return m.addressView()
+	case screenAccount:
+		return m.accountView()
+	case screenSettings:
+		return m.settingsView()
 	case screenAction:
 		return m.actionView()
 	case screenRunning:
@@ -750,7 +990,7 @@ func (m appModel) crumb() string {
 	switch m.screen {
 	case screenLoading:
 		trail = append(trail, sectionTitle(screenFeatured), "Loading")
-	case screenFeatured, screenSaved, screenRecent, screenDecrypt, screenAddress:
+	case screenFeatured, screenSaved, screenRecent, screenDecrypt, screenEncrypt, screenAddress, screenAccount, screenSettings:
 		trail = append(trail, sectionTitle(m.screen))
 	case screenAction:
 		trail = append(trail, sectionTitle(m.actionFrom), "Choose an action")
@@ -935,6 +1175,85 @@ func (m appModel) addressView() string {
 	return b.String()
 }
 
+func (m appModel) encryptView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	r := []rune(m.enc.value)
+	c := min(m.enc.cursor, len(r))
+	b.WriteString("\n  Pack directory: " + colorCyan + string(r[:c]) + caret + string(r[c:]) + colorReset + "\n")
+	if m.enc.err != "" {
+		b.WriteString("  " + colorRed + m.enc.err + colorReset + "\n")
+	}
+	b.WriteString("  " + colorDim + "Point at a folder with a manifest.json, e.g. ./MyPack_v1.0.0" + colorReset + "\n\n")
+	b.WriteString(hintBar(
+		hint{gEnter, "encrypt"},
+		hint{gLeft + gRight, "move"},
+		hint{"esc", "back"},
+	))
+	return b.String()
+}
+
+func (m appModel) accountView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	if loadToken() != nil {
+		b.WriteString("  " + colorGreen + "Signed in" + colorReset + "\n")
+	} else {
+		b.WriteString("  " + colorYellow + "Not signed in" + colorReset + "\n")
+	}
+	if dir, ok := configDir(); ok {
+		b.WriteString("  " + colorDim + "config: " + dir + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	for i, ch := range accountChoices {
+		writeRow(&b, i == m.accountCursor, ch.label)
+	}
+	b.WriteString("\n  " + colorDim + accountChoices[m.accountCursor].desc + colorReset + "\n")
+	if m.confirm == confirmLogout {
+		b.WriteString("\n  " + colorYellow + confirmPrompt(confirmLogout) + colorReset + "\n")
+		b.WriteString(hintBar(hint{"y", "sign out"}, hint{"n/esc", "cancel"}))
+		return b.String()
+	}
+	if m.note != "" {
+		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(hintBar(
+		hint{gUp + gDown, "move"},
+		hint{gRight + "/" + gEnter, "select"},
+		hint{gLeft + "/esc", "back"},
+	))
+	return b.String()
+}
+
+func (m appModel) settingsView() string {
+	var b strings.Builder
+	b.WriteString(m.crumb())
+	b.WriteString("\n  " + colorDim + "Maintenance" + colorReset + "\n\n")
+	for i, it := range settingsItems {
+		writeRow(&b, i == m.settingsCursor, it.label)
+	}
+	b.WriteString("\n  " + colorDim + settingsItems[m.settingsCursor].desc + colorReset + "\n")
+	if m.confirm != confirmNone {
+		b.WriteString("\n  " + colorYellow + confirmPrompt(m.confirm) + colorReset + "\n")
+		b.WriteString(hintBar(hint{"y", "yes"}, hint{"n/esc", "cancel"}))
+		return b.String()
+	}
+	if m.note != "" {
+		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
+	}
+	if dir, ok := configDir(); ok {
+		b.WriteString("  " + colorDim + "config: " + dir + colorReset + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(hintBar(
+		hint{gUp + gDown, "move"},
+		hint{gRight + "/" + gEnter, "run"},
+		hint{gLeft + "/esc", "back"},
+	))
+	return b.String()
+}
+
 func (m appModel) actionView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
@@ -1025,6 +1344,8 @@ func (m appModel) doneView() string {
 		switch {
 		case m.actionFrom == screenDecrypt:
 			// the per-row "decrypted -> <path>" lines above already show where
+		case m.actionFrom == screenEncrypt:
+			b.WriteString("  .mcpack + .mcpack.key written to the current directory\n")
 		case m.act == actionKeys:
 			b.WriteString("  keys saved to the current directory\n")
 		default:
@@ -1071,15 +1392,15 @@ func pluralPacks(n int) string {
 
 // --- address field -------------------------------------------------------
 
-// addrModel is the host:port text field's data (rendered by addressView).
+// textField is a one-line editable input (host:port, a pack path, ...).
 // cursor is a rune index into value, so left/right move within the text.
-type addrModel struct {
+type textField struct {
 	value  string
 	cursor int
 	err    string
 }
 
-func (a *addrModel) insert(s string) {
+func (a *textField) insert(s string) {
 	r, ins := []rune(a.value), []rune(s)
 	out := make([]rune, 0, len(r)+len(ins))
 	out = append(out, r[:a.cursor]...)
@@ -1088,7 +1409,7 @@ func (a *addrModel) insert(s string) {
 	a.value, a.cursor, a.err = string(out), a.cursor+len(ins), ""
 }
 
-func (a *addrModel) deleteBack() {
+func (a *textField) deleteBack() {
 	if a.cursor == 0 {
 		return
 	}

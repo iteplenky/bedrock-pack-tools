@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -167,5 +168,42 @@ func TestLoadOrCreateDeviceID_RoundTrip(t *testing.T) {
 	}
 	if _, err := uuid.Parse(first); err != nil {
 		t.Errorf("not a valid UUID: %q (%v)", first, err)
+	}
+}
+
+// TestResetDeviceID_DropsMCToken: the featured cohort treatments are baked into
+// the minted MCToken, so resetting the device.ID must also drop the cached
+// token or the featured list wouldn't change until the token expired (~4h).
+func TestResetDeviceID_DropsMCToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("config dir is not HOME-derived on windows")
+	}
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "cfg"))
+
+	devPath, err := deviceIDPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devPath, []byte("old-id\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mcPath, err := mctokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mcPath, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resetDeviceID(); err != nil {
+		t.Fatalf("resetDeviceID: %v", err)
+	}
+	if _, err := os.Stat(devPath); !os.IsNotExist(err) {
+		t.Errorf("device.ID should be removed (stat err=%v)", err)
+	}
+	if _, err := os.Stat(mcPath); !os.IsNotExist(err) {
+		t.Errorf("mctoken cache should be dropped so the new cohort takes effect (stat err=%v)", err)
 	}
 }

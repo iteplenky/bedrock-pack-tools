@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,44 @@ import (
 	"github.com/iteplenky/gophertunnel/minecraft/auth"
 	"golang.org/x/oauth2"
 )
+
+// runLogin ensures a cached Xbox token exists, starting the device-code flow
+// when there isn't one. Exposed as the `login` subcommand and re-execed by the
+// interactive menu (which hands it the real terminal for the device prompt).
+func runLogin([]string) error {
+	if _, err := getTokenSource(); err != nil {
+		return err
+	}
+	fmt.Println("  Signed in.")
+	return nil
+}
+
+// runLogout removes the cached Xbox + franchise tokens (the `logout`
+// subcommand). The device.ID cohort is left alone - that's not a credential.
+func runLogout([]string) error {
+	if err := clearAuthCaches(); err != nil {
+		return err
+	}
+	fmt.Println("  Signed out - cached tokens removed.")
+	return nil
+}
+
+// clearAuthCaches deletes the Xbox and MCToken caches. A missing file is not
+// an error. The device.ID is deliberately not touched here.
+func clearAuthCaches() error {
+	var errs []error
+	for _, resolve := range []func() (string, error){tokenPath, mctokenPath} {
+		path, err := resolve()
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
 
 const tokenFileName = ".xbox_token.json"
 

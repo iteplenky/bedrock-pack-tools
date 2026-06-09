@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"golang.org/x/oauth2"
 )
 
 func TestTuiModel_FilterMultiSelect(t *testing.T) {
@@ -104,13 +106,13 @@ func TestAppModel_SavedEnterQueuesJobs(t *testing.T) {
 
 func TestAppModel_AddressToActionPicker(t *testing.T) {
 	// Invalid address -> stays on the field with an error, no job queued.
-	var m tea.Model = appModel{screen: screenAddress, addr: addrModel{value: "nope"}}
+	var m tea.Model = appModel{screen: screenAddress, addr: textField{value: "nope"}}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if am := m.(appModel); am.screen != screenAddress || am.addr.err == "" || len(am.jobs) != 0 {
 		t.Fatalf("invalid address: screen=%d err=%q jobs=%d", am.screen, am.addr.err, len(am.jobs))
 	}
 	// Valid address -> one job queued, action picker opens.
-	m = appModel{screen: screenAddress, addr: addrModel{value: "play.example.net:19132"}}
+	m = appModel{screen: screenAddress, addr: textField{value: "play.example.net:19132"}}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	am := m.(appModel)
 	if am.screen != screenAction || len(am.jobs) != 1 || am.jobs[0].address != "play.example.net:19132" {
@@ -390,7 +392,7 @@ func TestResolveAddress_NoNetworkBranches(t *testing.T) {
 }
 
 func TestAddrModelCaret(t *testing.T) {
-	var a addrModel
+	var a textField
 	a.insert("abc")
 	a.cursor = 1
 	a.insert("X") // a|bc -> aX|bc
@@ -423,6 +425,125 @@ func TestAppModel_AddressLeftArrow(t *testing.T) {
 	am := tm.(appModel)
 	if am.screen != screenAddress || am.addr.cursor != 1 {
 		t.Fatalf("left with text: screen=%d cursor=%d, want address + cursor 1", am.screen, am.addr.cursor)
+	}
+}
+
+func TestValidatePackDir(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := validatePackDir(dir); err == nil {
+		t.Error("a dir without manifest.json should error")
+	}
+	if err := os.WriteFile(filepath.Join(dir, manifestJSON), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := validatePackDir(dir + "/"); err != nil || got != dir {
+		t.Fatalf("valid pack: got %q err=%v", got, err)
+	}
+	if _, err := validatePackDir(""); err == nil {
+		t.Error("empty path should error")
+	}
+	if _, err := validatePackDir(filepath.Join(dir, manifestJSON)); err == nil {
+		t.Error("a file (not a dir) should error")
+	}
+}
+
+func TestAppModel_EncryptEnter(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, manifestJSON), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := appModel{screen: screenEncrypt}
+	m.enc.insert(dir)
+	var tm tea.Model = m
+	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.screen != screenRunning || len(am.jobs) != 1 || cmd == nil {
+		t.Fatalf("valid path: screen=%d jobs=%d cmd=%v", am.screen, len(am.jobs), cmd)
+	}
+	if len(am.jobs[0].argv) < 2 || am.jobs[0].argv[0] != "encrypt" || am.actionFrom != screenEncrypt {
+		t.Fatalf("job=%+v actionFrom=%d", am.jobs[0], am.actionFrom)
+	}
+	// invalid path stays put with an error
+	bad := appModel{screen: screenEncrypt}
+	bad.enc.insert("/no/such/dir")
+	var bm tea.Model = bad
+	bm, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if bm.(appModel).screen != screenEncrypt || bm.(appModel).enc.err == "" {
+		t.Fatal("invalid path should stay on the encrypt screen with an error")
+	}
+}
+
+func TestAppModel_SettingsConfirm(t *testing.T) {
+	m := appModel{screen: screenSettings, store: store{Saved: []string{"a:1"}, Recent: []string{"b:2"}}}
+	var tm tea.Model = m
+	// first enter only arms the confirm
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if am.confirm != confirmClearAddrs || len(am.store.Saved) != 1 {
+		t.Fatalf("first enter should arm only: confirm=%d saved=%d", am.confirm, len(am.store.Saved))
+	}
+	// y confirms and clears
+	tm, _ = am.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	am = tm.(appModel)
+	if am.confirm != confirmNone || len(am.store.Saved) != 0 || len(am.store.Recent) != 0 {
+		t.Fatalf("y should clear: confirm=%d saved=%d recent=%d", am.confirm, len(am.store.Saved), len(am.store.Recent))
+	}
+	// arm again, then esc cancels (store untouched)
+	m2 := appModel{screen: screenSettings, store: store{Saved: []string{"x:1"}}}
+	var t2 tea.Model = m2
+	t2, _ = t2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	t2, _ = t2.(appModel).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if a2 := t2.(appModel); a2.confirm != confirmNone || len(a2.store.Saved) != 1 {
+		t.Fatalf("esc should cancel: confirm=%d saved=%d", a2.confirm, len(a2.store.Saved))
+	}
+}
+
+func TestAppModel_AccountLogout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("config dir is not HOME-derived on windows")
+	}
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "cfg"))
+	p, err := tokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`{"access_token":"x","refresh_token":"y"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := appModel{
+		screen:        screenAccount,
+		accountCursor: 1, // "Log out"
+		ts:            oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"}),
+		fClient:       &franchise.Client{},
+		fServers:      []franchise.Server{{}},
+	}
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter}) // arm
+	if tm.(appModel).confirm != confirmLogout {
+		t.Fatalf("Log out should arm confirmLogout, got %d", tm.(appModel).confirm)
+	}
+	tm, _ = tm.(appModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("logout should remove the token file (stat err=%v)", err)
+	}
+	// Logout must invalidate the in-memory session too, or it keeps minting
+	// tokens and silently re-writes the cache we just deleted.
+	if am := tm.(appModel); am.ts != nil || am.fClient != nil || am.fServers != nil {
+		t.Errorf("logout left in-memory session: ts=%v fClient=%v fServers=%v", am.ts, am.fClient, am.fServers)
+	}
+
+	// Signed out, opening Featured routes to Account instead of fetching the
+	// catalog with no credentials.
+	out := appModel{screen: screenMenu, menuCursor: 0} // Featured is the first section
+	if sections[0].target != screenFeatured {
+		t.Fatalf("expected Featured first, got %d", sections[0].target)
+	}
+	var om tea.Model = out
+	om, cmd := om.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if am := om.(appModel); am.screen != screenAccount || cmd != nil {
+		t.Errorf("signed-out Featured should route to Account with no fetch: screen=%d cmd=%v", am.screen, cmd)
 	}
 }
 
