@@ -91,14 +91,23 @@ func defaultDecryptOutBase(packsDir string) string {
 	return trimmed + "_decrypted"
 }
 
-func decryptAll(keysFile, packsDir, outBase string) error {
-	data, err := os.ReadFile(keysFile)
+// readKeyMap loads a keys.json (pack UUID -> key info) written by keys/download.
+func readKeyMap(path string) (map[string]keyEntry, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", keysFile, err)
+		return nil, err
 	}
 	var keys map[string]keyEntry
 	if err := json.Unmarshal(data, &keys); err != nil {
-		return fmt.Errorf("parse %s: %w", keysFile, err)
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return keys, nil
+}
+
+func decryptAll(keysFile, packsDir, outBase string) error {
+	keys, err := readKeyMap(keysFile)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", keysFile, err)
 	}
 
 	if outBase == "" {

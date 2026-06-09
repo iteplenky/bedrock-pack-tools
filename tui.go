@@ -318,7 +318,7 @@ func forward(key tea.KeyMsg) bool { return key.String() == "enter" || key.String
 
 func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "esc", "q":
+	case "esc", "q", "left": // left = back; at the top level that means quit
 		return m, tea.Quit
 	case "up":
 		if m.menuCursor > 0 {
@@ -526,7 +526,7 @@ func (m appModel) handleRunningKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.resolveCancel = nil
 		}
 	case key.String() == "p":
-		if pauseSupported && m.runProc != nil {
+		if pauseSupported && !m.canceled && m.runProc != nil {
 			if m.paused {
 				_ = resumeProcess(m.runProc)
 			} else {
@@ -641,6 +641,13 @@ func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	j := m.jobs[m.jobIdx]
+	// Only claim "decrypted -> X" if that output actually exists; a plain
+	// (unencrypted) server produces no decrypted folder.
+	if j.outDir != "" {
+		if _, err := os.Stat(j.outDir); err != nil {
+			j.outDir = ""
+		}
+	}
 	m.results = append(m.results, jobResult{label: j.label, err: msg.err, outDir: j.outDir})
 	if msg.err != nil {
 		m.logLines = append(m.logLines, "[err] "+msg.err.Error())
@@ -669,11 +676,17 @@ func (m *appModel) recordOutcome(j job, ok bool) {
 	if err != nil {
 		return
 	}
+	keysFile := filepath.Join(cwd, sanitizeServerAddr(j.address)+keysSuffix)
+	// Only list it in the decrypt section if a keys file landed - i.e. the
+	// server shipped encrypted packs. Plain packs need no decryption.
+	if _, err := os.Stat(keysFile); err != nil {
+		return
+	}
 	m.store.addDownload(download{
 		Label:    j.label,
 		Address:  j.address,
 		Dir:      cwd,
-		KeysFile: filepath.Join(cwd, sanitizeServerAddr(j.address)+keysSuffix),
+		KeysFile: keysFile,
 		When:     nowStamp(),
 	})
 }
@@ -946,6 +959,9 @@ func (m appModel) runningView() string {
 		b.WriteString("  " + colorYellow + "[paused]" + colorReset + "\n")
 	}
 	b.WriteString("\n")
+	if m.canceled {
+		return b.String() // canceling - no actionable keys left
+	}
 	hints := []hint{}
 	if pauseSupported {
 		label := "pause"
@@ -1025,6 +1041,13 @@ func pluralServers(n int) string {
 		return "1 server"
 	}
 	return fmt.Sprintf("%d servers", n)
+}
+
+func pluralPacks(n int) string {
+	if n == 1 {
+		return "1 pack"
+	}
+	return fmt.Sprintf("%d packs", n)
 }
 
 // --- address field -------------------------------------------------------
@@ -1151,21 +1174,24 @@ func (d decryptState) decryptable() bool { return d.packs > 0 && d.hasKeys }
 // inspectDownload reads the filesystem to see what's actually present now.
 func inspectDownload(d download) decryptState {
 	st := decryptState{}
-	if d.KeysFile != "" {
-		if _, err := os.Stat(d.KeysFile); err == nil {
-			st.hasKeys = true
-		}
-	}
-	entries, err := os.ReadDir(d.Dir)
-	if err != nil {
-		return st
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(d.Dir, e.Name(), contentsJSON)); err == nil {
-			st.packs++
+	keys, _ := readKeyMap(d.KeysFile) // nil if the file is absent/corrupt
+	st.hasKeys = len(keys) > 0
+	if entries, err := os.ReadDir(d.Dir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			packDir := filepath.Join(d.Dir, e.Name())
+			if _, err := os.Stat(filepath.Join(packDir, contentsJSON)); err != nil {
+				continue // not an encrypted pack folder
+			}
+			// Count only packs THIS download's keys can actually decrypt, so a
+			// shared working directory doesn't mix in other servers' packs.
+			if uid, err := readPackUUID(packDir); err == nil {
+				if _, ok := keys[uid]; ok {
+					st.packs++
+				}
+			}
 		}
 	}
 	// Already-decrypted output (re-decrypting just overwrites it, so this is
@@ -1298,7 +1324,7 @@ func decryptBadge(st decryptState) string {
 	if st.hasKeys {
 		keys = colorGreen + "keys" + colorReset
 	}
-	badge := colorDim + fmt.Sprintf("%d packs · ", st.packs) + colorReset + keys
+	badge := colorDim + pluralPacks(st.packs) + " · " + colorReset + keys
 	if st.decrypted {
 		badge += colorDim + " · decrypted" + colorReset
 	}
@@ -1308,7 +1334,7 @@ func decryptBadge(st decryptState) string {
 func decryptHelp(st decryptState, hasAddr bool) string {
 	switch {
 	case st.decryptable():
-		return fmt.Sprintf("Decrypt %d packs - output lands in a sibling _decrypted folder.", st.packs)
+		return fmt.Sprintf("Decrypt %s - output lands in a sibling _decrypted folder.", pluralPacks(st.packs))
 	case st.packs > 0 && !st.hasKeys:
 		if hasAddr {
 			return "Packs are here but the keys file is missing - press g to fetch keys + packs."

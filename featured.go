@@ -349,6 +349,9 @@ func statusFor(s franchise.Server) string {
 	if s.Players <= 0 {
 		return "online"
 	}
+	if s.Players == 1 {
+		return "online 1 player"
+	}
 	return fmt.Sprintf("online %s players", humanCount(s.Players))
 }
 

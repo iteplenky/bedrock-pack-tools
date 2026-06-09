@@ -207,7 +207,9 @@ func TestAppModel_JobFinishedAdvancesAndSummarizes(t *testing.T) {
 
 func TestInspectDownload(t *testing.T) {
 	dir := t.TempDir()
-	// One encrypted pack folder + a keys file.
+	// An encrypted pack folder (contents.json + a manifest UUID) plus a keys
+	// file that has a key for that UUID.
+	uid := "11111111-1111-1111-1111-111111111111"
 	packDir := filepath.Join(dir, "Pack_v1")
 	if err := os.MkdirAll(packDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -215,19 +217,31 @@ func TestInspectDownload(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(packDir, contentsJSON), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(packDir, manifestJSON), []byte(`{"header":{"uuid":"`+uid+`"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	keys := filepath.Join(dir, "srv_keys.json")
-	if err := os.WriteFile(keys, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(keys, []byte(`{"`+uid+`":{"key":"k"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	st := inspectDownload(download{Dir: dir, KeysFile: keys})
 	if st.packs != 1 || !st.hasKeys || !st.decryptable() {
-		t.Fatalf("inspect = %+v, want 1 pack + keys + decryptable", st)
+		t.Fatalf("inspect = %+v, want 1 matched pack + keys + decryptable", st)
 	}
-	// No keys -> not decryptable.
+	// A keys file that doesn't match the pack -> not counted, not decryptable.
+	other := filepath.Join(dir, "other_keys.json")
+	if err := os.WriteFile(other, []byte(`{"99999999-9999-9999-9999-999999999999":{"key":"k"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st = inspectDownload(download{Dir: dir, KeysFile: other})
+	if st.packs != 0 || !st.hasKeys {
+		t.Fatalf("inspect (non-matching keys) = %+v, want 0 matched packs", st)
+	}
+	// No keys file -> plain, nothing to decrypt.
 	st = inspectDownload(download{Dir: dir, KeysFile: filepath.Join(dir, "missing.json")})
-	if st.packs != 1 || st.hasKeys || st.decryptable() {
-		t.Fatalf("inspect (no keys) = %+v, want 1 pack, no keys, not decryptable", st)
+	if st.packs != 0 || st.hasKeys || st.decryptable() {
+		t.Fatalf("inspect (no keys) = %+v, want 0 packs, no keys, not decryptable", st)
 	}
 }
 
@@ -300,6 +314,18 @@ func TestAppModel_CancelFinishDoesNotRecordFailure(t *testing.T) {
 	}
 	if _, ok := am.store.Status["a:1"]; ok {
 		t.Error("cancelled job should not persist a status")
+	}
+}
+
+func TestRunningCancelHidesPauseHint(t *testing.T) {
+	// While a cancel is in flight, the footer must not advertise pause/cancel.
+	m := appModel{screen: screenRunning, canceled: true, jobs: []job{{label: "x"}}, width: 80}
+	v := m.View()
+	if strings.Contains(v, "pause") {
+		t.Errorf("canceling footer must not advertise pause:\n%s", v)
+	}
+	if !strings.Contains(v, "[canceling]") {
+		t.Errorf("canceling state should show [canceling]:\n%s", v)
 	}
 }
 
