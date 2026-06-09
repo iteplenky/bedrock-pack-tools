@@ -80,8 +80,10 @@ func request(ctx context.Context, method, urlStr string, payload []byte, authHea
 	switch resp.StatusCode {
 	case http.StatusOK:
 		return body, nil
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return nil, ErrAuthRejected
+	case http.StatusForbidden:
+		return nil, ErrForbidden
 	default:
 		return nil, &httpStatusErr{code: resp.StatusCode, body: body}
 	}

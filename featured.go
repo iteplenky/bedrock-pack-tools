@@ -158,6 +158,9 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 			return client.Venue(ctx, s.GatheringID)
 		})
 		if err != nil {
+			if errors.Is(err, franchise.ErrForbidden) {
+				return "", fmt.Errorf("%q is not joinable by this account (Mojang returned forbidden)", s.Name)
+			}
 			return "", fmt.Errorf("resolve gathering %q: %w", s.Name, err)
 		}
 		return fmt.Sprintf("%s:%d", host, port), nil
@@ -166,8 +169,11 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 			return client.JoinExperience(ctx, s.ExperienceID)
 		})
 		if err != nil {
-			if errors.Is(err, franchise.ErrExperienceOffline) {
+			switch {
+			case errors.Is(err, franchise.ErrExperienceOffline):
 				return "", fmt.Errorf("%q has no active venue right now (the slot is listed but not joinable from outside the official client)", s.Name)
+			case errors.Is(err, franchise.ErrForbidden):
+				return "", fmt.Errorf("%q is not joinable by this account (Mojang returned forbidden - it may be region-locked or only joinable from the official client)", s.Name)
 			}
 			return "", fmt.Errorf("resolve experience %q: %w", s.Name, err)
 		}
@@ -176,9 +182,10 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 	return "", fmt.Errorf("unknown featured kind for %q", s.Name)
 }
 
-// resolveWithRetry re-mints the MCToken once on ErrAuthRejected, mirroring
-// the catalog fetch - a server-revoked but time-valid cached token would
-// otherwise strand the resolve (per the franchise package contract).
+// resolveWithRetry re-mints the MCToken once on ErrAuthRejected (401),
+// mirroring the catalog fetch - a server-revoked but time-valid cached token
+// would otherwise strand the resolve. It deliberately does NOT retry on
+// ErrForbidden (403): a fresh token can't grant access the account lacks.
 func resolveWithRetry(client *franchise.Client, call func() (string, int, error)) (string, int, error) {
 	host, port, err := call()
 	if errors.Is(err, franchise.ErrAuthRejected) {

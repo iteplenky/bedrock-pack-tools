@@ -174,6 +174,13 @@ func TestHumanize(t *testing.T) {
 			wantFixPart:      "rm ",
 		},
 		{
+			name:             "our sentinel: franchise.ErrForbidden (403, not a token problem)",
+			err:              fmt.Errorf("resolve experience %q: %w", "X", franchise.ErrForbidden),
+			wantOK:           true,
+			wantHeadlinePart: "won't let this account",
+			wantFixPart:      "different entry",
+		},
+		{
 			name:             "our sentinel: errPackNoManifest",
 			err:              fmt.Errorf("%w: no header.uuid", errPackNoManifest),
 			wantOK:           true,

@@ -33,15 +33,23 @@ func TestFranchiseRequest_OKReturnsBody(t *testing.T) {
 	}
 }
 
-func TestFranchiseRequest_AuthRejected(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+func TestFranchiseRequest_AuthErrors(t *testing.T) {
+	// 401 = token rejected (re-mintable); 403 = forbidden (re-mint won't help).
+	cases := []struct {
+		status int
+		want   error
+	}{
+		{http.StatusUnauthorized, ErrAuthRejected},
+		{http.StatusForbidden, ErrForbidden},
+	}
+	for _, tc := range cases {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(status)
+			w.WriteHeader(tc.status)
 		}))
 		_, err := request(context.Background(), http.MethodGet, ts.URL, nil, "MCToken x")
 		ts.Close()
-		if !errors.Is(err, ErrAuthRejected) {
-			t.Errorf("status %d: err = %v, want ErrAuthRejected", status, err)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("status %d: err = %v, want %v", tc.status, err, tc.want)
 		}
 	}
 }

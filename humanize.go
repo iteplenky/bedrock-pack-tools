@@ -127,6 +127,14 @@ func classifyOurSentinels(err error) (diagnostic, bool) {
 				"Or pick a different index from the list; entries that already show host:port are joinable anytime.",
 		}, true
 
+	case errors.Is(err, franchise.ErrForbidden):
+		return diagnostic{
+			headline: "Mojang won't let this account reach that slot",
+			body:     "Your token is valid (other entries resolve fine), but Mojang returned 403 Forbidden for this one. Some experiences and events are region-locked or only joinable from the official client.",
+			fix: "Pick a different entry, ideally one that already shows host:port.\n" +
+				"This isn't a token problem - re-authenticating won't change it.",
+		}, true
+
 	case errors.Is(err, franchise.ErrAuthRejected):
 		// Reaching the user means the featured.go re-mint retry also failed.
 		return diagnostic{

@@ -11,11 +11,17 @@ package franchise
 
 import "errors"
 
-// ErrAuthRejected fires when the gatherings service rejects our
-// MCToken (401/403). Callers should Invalidate and re-mint once
-// before propagating - a raw 401 would strand the user on a
-// server-side-revoked but time-valid cache.
+// ErrAuthRejected fires on 401 Unauthorized: the MCToken itself was not
+// accepted (stale or server-side-revoked). Callers should Invalidate and
+// re-mint once before propagating - a raw 401 would otherwise strand the user
+// on a time-valid but revoked cache.
 var ErrAuthRejected = errors.New("franchise: token rejected")
+
+// ErrForbidden fires on 403 Forbidden: the token is valid, but this account
+// isn't allowed to reach the resource (e.g. an experience that's region-locked
+// or only joinable from the official client). Re-minting the token will NOT
+// help, so callers must not retry on it.
+var ErrForbidden = errors.New("franchise: access forbidden")
 
 // ErrExperienceOffline is returned when JoinExperience resolves but
 // no venue is currently active. Same response the in-game client
