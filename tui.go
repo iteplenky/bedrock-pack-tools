@@ -1086,10 +1086,100 @@ func writeRow(b *strings.Builder, selected bool, text string) {
 	}
 }
 
+// rgbTo256 maps a 24-bit color to the nearest xterm-256 color-cube index, for
+// terminals that don't advertise truecolor.
+func rgbTo256(c [3]uint8) int {
+	q := func(v uint8) int { return (int(v)*5 + 127) / 255 }
+	return 16 + 36*q(c[0]) + 6*q(c[1]) + q(c[2])
+}
+
+// pxCell renders one icon cell as a half-block: the top pixel above the bottom
+// pixel inside a single (roughly square) terminal cell. '.' is transparent and
+// shows the terminal background, so the gem floats. Color is quantized to the
+// xterm-256 cube so it renders identically with or without truecolor; callers
+// reset color at row end. Under NO_COLOR it degrades to a plain silhouette.
+func pxCell(top, bottom byte) string {
+	topT, botT := top == '.', bottom == '.'
+	if iconColor == "none" {
+		switch {
+		case topT && botT:
+			return " "
+		case botT:
+			return "▀"
+		case topT:
+			return "▄"
+		default:
+			return "█"
+		}
+	}
+	switch {
+	case topT && botT:
+		return "\033[0m "
+	case botT: // top pixel only -> upper half, default background below
+		return fmt.Sprintf("\033[49;38;5;%dm▀", rgbTo256(iconPx[top]))
+	case topT: // bottom pixel only -> lower half, default background above
+		return fmt.Sprintf("\033[49;38;5;%dm▄", rgbTo256(iconPx[bottom]))
+	default:
+		return fmt.Sprintf("\033[38;5;%d;48;5;%dm▀",
+			rgbTo256(iconPx[top]), rgbTo256(iconPx[bottom]))
+	}
+}
+
+// menuHeader is the Home banner: the menu mascot - a little knight raising a key
+// (it unlocks the packs) - beside the wordmark and tagline. Half-block glyphs
+// pack two pixel rows into each terminal cell, so the 16x16 sprite reads square
+// in an 8-cell-tall band and floats on the terminal background.
+func menuHeader() string {
+	px := []string{
+		".....cC.........",
+		"....oCco........",
+		"...oLLLLo.......",
+		"..oLLLLLLo.ggg..",
+		"..oLoLLoLo.g.g..",
+		"..oLLLLLLo.ggg..",
+		"..oLooooLo..G...",
+		"...oLLLLo...GG..",
+		"..oDDDDDDo..G...",
+		".oSSLDDLSSo.....",
+		"oSSSLDDLSSSo....",
+		"oSSSSSSSSSSo....",
+		".oSDSSSSDSo.....",
+		".oSSo..oSSo.....",
+		".oDDo..oDDo.....",
+		".oLL....LLo.....",
+	}
+	labels := []string{
+		"",
+		"",
+		"",
+		colorCyan + "bedrock-pack-tools" + colorReset,
+		colorDim + "Dump, download, and decrypt" + colorReset,
+		colorDim + "Minecraft Bedrock resource packs" + colorReset,
+		"",
+		"",
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	for i := 0; i < len(px)/2; i++ {
+		top, bottom := px[2*i], px[2*i+1]
+		b.WriteString("   ")
+		for x := 0; x < len(top); x++ {
+			b.WriteString(pxCell(top[x], bottom[x]))
+		}
+		b.WriteString(colorReset)
+		if labels[i] != "" {
+			b.WriteString("   " + labels[i])
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 func (m appModel) menuView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
-	b.WriteString("  " + colorDim + "Dump, download, and decrypt Minecraft Bedrock resource packs" + colorReset + "\n\n")
+	b.WriteString(menuHeader())
 	prevGroup := sections[0].group
 	for i, s := range sections {
 		if s.group != prevGroup {
