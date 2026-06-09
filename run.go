@@ -92,7 +92,12 @@ type jobStartedMsg struct {
 }
 
 // jobFinishedMsg fires once the child exits and all its output is drained.
-type jobFinishedMsg struct{ err error }
+// detail is the child's last committed output line - usually the real error
+// when it failed, surfaced instead of a bare "exited with code N".
+type jobFinishedMsg struct {
+	err    error
+	detail string
+}
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
@@ -100,6 +105,29 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 // the alt-screen (bubbletea repaints the whole frame each tick).
 func stripANSI(s string) string {
 	return strings.TrimRight(ansiRE.ReplaceAllString(s, ""), " \t")
+}
+
+var progressLineRE = regexp.MustCompile(`Downloading: [\d.]+ MB \(\d+ KB/s\)\s*`)
+
+// cleanLogLine prepares a child stdout line for the in-menu log: it drops pure
+// noise (the long CDN source URL, the box-drawing banner) and strips the live
+// "Downloading: X MB (Y KB/s)" rate, which the child rewrites in place and
+// which can glue onto a real line when captured. The live rate is shown
+// separately as the status line. Returns ("", false) to drop the line.
+func cleanLogLine(s string) (string, bool) {
+	switch t := strings.TrimSpace(s); {
+	case t == "",
+		strings.HasPrefix(t, "CDN download:"),
+		strings.HasPrefix(t, "┌"),
+		strings.HasPrefix(t, "│"),
+		strings.HasPrefix(t, "└"):
+		return "", false
+	}
+	s = strings.TrimRight(progressLineRE.ReplaceAllString(s, ""), " ")
+	if strings.TrimSpace(s) == "" {
+		return "", false
+	}
+	return s, true
 }
 
 // envWithout returns env with every key=... entry dropped. We strip
@@ -200,17 +228,25 @@ func runArgvCmd(argv []string) tea.Cmd {
 // streamChild forwards the child's output as runEvents, then a single
 // jobFinishedMsg once it exits and every line has been delivered.
 func streamChild(cmd *exec.Cmd, pr *io.PipeReader, pw *io.PipeWriter, ch chan tea.Msg) {
+	var lastLine string
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
-		splitStream(pr, func(ev runEvent) { ch <- ev })
+		splitStream(pr, func(ev runEvent) {
+			if !ev.transient {
+				if t := strings.TrimSpace(ev.text); t != "" {
+					lastLine = t // the child's last real line - usually the error on failure
+				}
+			}
+			ch <- ev
+		})
 	}()
 	// cmd.Wait blocks until the output-copy goroutines finish, so closing
 	// the pipe afterwards cleanly ends the reader with everything flushed.
 	err := cmd.Wait()
 	_ = pw.Close()
 	<-drained
-	ch <- jobFinishedMsg{err: interpretExit(err)}
+	ch <- jobFinishedMsg{err: interpretExit(err), detail: lastLine}
 	// Close so a consumer that stopped reading (e.g. after a cancel) can drain
 	// to completion instead of leaking this goroutine on a blocked send.
 	close(ch)

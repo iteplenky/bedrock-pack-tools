@@ -115,6 +115,7 @@ type appModel struct {
 	menuCursor int
 	ts         oauth2.TokenSource
 	width      int
+	height     int
 	store      store
 
 	featured          tuiModel      // featured-list state (screenFeatured)
@@ -226,6 +227,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case catalogLoadedMsg:
 		if m.screen == screenLoading {
@@ -259,8 +261,8 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.transient {
 			m.statusLn = msg.text
-		} else {
-			m.logLines = append(m.logLines, msg.text)
+		} else if line, ok := cleanLogLine(msg.text); ok {
+			m.logLines = append(m.logLines, line)
 		}
 		if m.runCh != nil {
 			return m, waitRun(m.runCh)
@@ -440,6 +442,16 @@ func (m appModel) handleAddressKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		m.screen = screenMenu
+	case "left":
+		if m.addr.value == "" {
+			m.screen = screenMenu // empty field: left exits, like every other screen
+		} else if m.addr.cursor > 0 {
+			m.addr.cursor-- // otherwise move the caret through the text
+		}
+	case "right":
+		if m.addr.cursor < len([]rune(m.addr.value)) {
+			m.addr.cursor++
+		}
 	case "enter":
 		addr, err := validateAddress(m.addr.value)
 		if err != nil {
@@ -458,14 +470,10 @@ func (m appModel) handleAddressKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.note = "saved " + addr
 		}
 	case "backspace":
-		if m.addr.value != "" {
-			m.addr.value = m.addr.value[:len(m.addr.value)-1]
-			m.addr.err = ""
-		}
+		m.addr.deleteBack()
 	default:
 		if key.Type == tea.KeyRunes {
-			m.addr.value += string(key.Runes)
-			m.addr.err = ""
+			m.addr.insert(string(key.Runes))
 		}
 	}
 	return m, nil
@@ -648,9 +656,13 @@ func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 			j.outDir = ""
 		}
 	}
-	m.results = append(m.results, jobResult{label: j.label, err: msg.err, outDir: j.outDir})
-	if msg.err != nil {
-		m.logLines = append(m.logLines, "[err] "+msg.err.Error())
+	resErr := msg.err
+	if resErr != nil && msg.detail != "" {
+		resErr = fmt.Errorf("%s", msg.detail) // the child's real last line, not just "exited with code N"
+	}
+	m.results = append(m.results, jobResult{label: j.label, err: resErr, outDir: j.outDir})
+	if resErr != nil {
+		m.logLines = append(m.logLines, "[err] "+resErr.Error())
 	}
 	m.recordOutcome(j, msg.err == nil)
 	m.runProc = nil
@@ -904,7 +916,9 @@ func (m appModel) listView(emptyMsg string, isRecent bool) string {
 func (m appModel) addressView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
-	b.WriteString("\n  Server address: " + colorCyan + m.addr.value + colorReset + caret + "\n")
+	r := []rune(m.addr.value)
+	c := min(m.addr.cursor, len(r))
+	b.WriteString("\n  Server address: " + colorCyan + string(r[:c]) + caret + string(r[c:]) + colorReset + "\n")
 	if m.addr.err != "" {
 		b.WriteString("  " + colorRed + m.addr.err + colorReset + "\n")
 	}
@@ -914,6 +928,7 @@ func (m appModel) addressView() string {
 	b.WriteString("  " + colorDim + "Example: play.example.net:19132 or 1.2.3.4:19132" + colorReset + "\n\n")
 	b.WriteString(hintBar(
 		hint{gEnter, "continue"},
+		hint{gLeft + gRight, "move"},
 		hint{"^s", "save"},
 		hint{"esc", "back"},
 	))
@@ -941,9 +956,13 @@ func (m appModel) runningView() string {
 	b.WriteString(m.crumb())
 	b.WriteString("  " + colorDim + fmt.Sprintf("job %d/%d", min(m.jobIdx+1, len(m.jobs)), len(m.jobs)) + colorReset + "\n\n")
 
+	tail := runLogTail
+	if m.height > runLogTail+8 {
+		tail = m.height - 8 // fill the screen, leaving room for crumb/job/status/hints
+	}
 	start := 0
-	if len(m.logLines) > runLogTail {
-		start = len(m.logLines) - runLogTail
+	if len(m.logLines) > tail {
+		start = len(m.logLines) - tail
 	}
 	for _, ln := range m.logLines[start:] {
 		b.WriteString("  " + m.truncate(ln) + "\n")
@@ -1053,9 +1072,29 @@ func pluralPacks(n int) string {
 // --- address field -------------------------------------------------------
 
 // addrModel is the host:port text field's data (rendered by addressView).
+// cursor is a rune index into value, so left/right move within the text.
 type addrModel struct {
-	value string
-	err   string
+	value  string
+	cursor int
+	err    string
+}
+
+func (a *addrModel) insert(s string) {
+	r, ins := []rune(a.value), []rune(s)
+	out := make([]rune, 0, len(r)+len(ins))
+	out = append(out, r[:a.cursor]...)
+	out = append(out, ins...)
+	out = append(out, r[a.cursor:]...)
+	a.value, a.cursor, a.err = string(out), a.cursor+len(ins), ""
+}
+
+func (a *addrModel) deleteBack() {
+	if a.cursor == 0 {
+		return
+	}
+	r := []rune(a.value)
+	a.value = string(append(r[:a.cursor-1], r[a.cursor:]...))
+	a.cursor, a.err = a.cursor-1, ""
 }
 
 // validateAddress accepts a host:port with a numeric 0-65535 port and a
@@ -1202,14 +1241,21 @@ func inspectDownload(d download) decryptState {
 	return st
 }
 
-// openDecrypt loads the remembered downloads and their current on-disk state.
+// openDecrypt loads the remembered downloads and their current on-disk state,
+// keeping only entries that have a keys file - a plain (keyless) download has
+// nothing to decrypt and would just be confusing clutter here.
 func (m *appModel) openDecrypt() {
-	m.dls = append([]download(nil), m.store.Downloads...)
-	m.dlStates = make([]decryptState, len(m.dls))
-	labels := make([]string, len(m.dls))
-	for i, d := range m.dls {
-		m.dlStates[i] = inspectDownload(d)
-		labels[i] = d.Label
+	m.dls = nil
+	m.dlStates = nil
+	var labels []string
+	for _, d := range m.store.Downloads {
+		st := inspectDownload(d)
+		if !st.hasKeys {
+			continue
+		}
+		m.dls = append(m.dls, d)
+		m.dlStates = append(m.dlStates, st)
+		labels = append(labels, d.Label)
 	}
 	m.list = newAddrList(labels)
 	m.screen = screenDecrypt

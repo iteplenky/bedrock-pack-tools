@@ -389,6 +389,43 @@ func TestResolveAddress_NoNetworkBranches(t *testing.T) {
 	}
 }
 
+func TestAddrModelCaret(t *testing.T) {
+	var a addrModel
+	a.insert("abc")
+	a.cursor = 1
+	a.insert("X") // a|bc -> aX|bc
+	if a.value != "aXbc" || a.cursor != 2 {
+		t.Fatalf("insert mid: %q cursor=%d", a.value, a.cursor)
+	}
+	a.deleteBack() // remove X -> a|bc
+	if a.value != "abc" || a.cursor != 1 {
+		t.Fatalf("deleteBack: %q cursor=%d", a.value, a.cursor)
+	}
+	a.cursor = 0
+	a.deleteBack() // no-op at start
+	if a.value != "abc" || a.cursor != 0 {
+		t.Fatalf("deleteBack at start: %q cursor=%d", a.value, a.cursor)
+	}
+}
+
+func TestAppModel_AddressLeftArrow(t *testing.T) {
+	// Empty field: left exits to the menu.
+	var m tea.Model = appModel{screen: screenAddress}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if m.(appModel).screen != screenMenu {
+		t.Fatalf("left on empty address should exit, got %d", m.(appModel).screen)
+	}
+	// With text: left moves the caret and stays on the screen.
+	m2 := appModel{screen: screenAddress}
+	m2.addr.insert("ab")
+	var tm tea.Model = m2
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	am := tm.(appModel)
+	if am.screen != screenAddress || am.addr.cursor != 1 {
+		t.Fatalf("left with text: screen=%d cursor=%d, want address + cursor 1", am.screen, am.addr.cursor)
+	}
+}
+
 func TestValidateAddress(t *testing.T) {
 	for _, ok := range []string{"play.example.net:19132", "1.2.3.4:25565", "[::1]:19132"} {
 		if _, err := validateAddress(ok); err != nil {

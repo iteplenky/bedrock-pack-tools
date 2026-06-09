@@ -170,6 +170,30 @@ func TestInterpretExit_SignalKill(t *testing.T) {
 	}
 }
 
+func TestCleanLogLine(t *testing.T) {
+	drop := []string{
+		"",
+		"  CDN download: 6b90 v1.3.360 from https://cdn.example/x.zip?sig=abc",
+		"  ┌─ Pack Downloader ──",
+		"  │ Keys:   srv_keys.json",
+		"  └────────",
+		"  Downloading: 31.1 MB (631 KB/s)",
+	}
+	for _, s := range drop {
+		if _, ok := cleanLogLine(s); ok {
+			t.Errorf("cleanLogLine(%q) kept, want dropped", s)
+		}
+	}
+	if got, ok := cleanLogLine("  [OK]  Pack_v1 (12 files)"); !ok || got != "  [OK]  Pack_v1 (12 files)" {
+		t.Errorf("real line: got %q ok=%v", got, ok)
+	}
+	// the live rate glued onto a committed line is stripped off
+	got, ok := cleanLogLine("Downloading: 1.7 MB (302 KB/s)  [OK]  Pack_v2 (5 files)")
+	if !ok || strings.Contains(got, "Downloading") {
+		t.Errorf("merged line not de-striped: %q ok=%v", got, ok)
+	}
+}
+
 func TestInterpretExit(t *testing.T) {
 	if interpretExit(nil) != nil {
 		t.Error("nil should stay nil")
