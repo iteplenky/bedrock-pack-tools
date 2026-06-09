@@ -294,7 +294,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m, nil
+		// Repaint from a clean slate: some terminals leave stale cells behind
+		// when the grid is resized (e.g. font-zoom that reflows rows/cols).
+		return m, tea.ClearScreen
 	case catalogLoadedMsg:
 		if m.screen == screenLoading {
 			m.fServers = msg.servers
