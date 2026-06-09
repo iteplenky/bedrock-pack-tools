@@ -20,7 +20,7 @@ into plain editable folders or re-encrypt your own.
 - **`login`** - sign in via Xbox Live (device code flow) and cache the token
 - **`logout`** - remove the cached Xbox + MCToken auth files
 - **`version`** - print the build version
-- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `host:port`, pick an action (download, download + decrypt, or keys only), and watch live progress - pause with `p`, cancel with `esc`
+- **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space), enter any `host:port` and pick an action (download, download + decrypt, or keys only), decrypt past downloads, encrypt a local pack, or open Settings to sign in/out and clear cached data - and watch live progress, pause with `p`, cancel with `esc`
 
 **Scope.** Built for researchers, server operators auditing their own
 deployments, and pack authors recovering their own keys. Not for
@@ -89,6 +89,11 @@ Pick **Featured servers** to browse the live catalog (filter as you type,
 `host:port`. Then choose an action - download, download + decrypt, or keys
 only - and it streams progress in place: `p` pauses, `esc` cancels, and you
 land back on the menu when it finishes.
+
+The menu also has **Decrypt packs** (turn a past download into editable
+folders, or fetch what's missing), **Encrypt a pack** (package a local folder
+into a `.mcpack`), and **Settings** (sign in or out, clear saved addresses or
+download history, or reset the featured cohort).
 
 Or from the command line:
 
@@ -315,7 +320,8 @@ redistribute someone else's paid content.
 Mojang shards the catalog by a PlayFab Experiments cohort, keyed on
 `device.id`. The tool persists a stable ID in `.device_id` so your list
 stays consistent across runs - and may differ from your in-game client
-if you landed in a different cohort. Delete `.device_id` and rerun to
+if you landed in a different cohort. Use **Settings > Reset featured
+cohort** in the interactive menu (or delete `.device_id` and rerun) to
 roll a new cohort.
 
 **A `[EVT]` row fails on download.**

@@ -1097,7 +1097,7 @@ func rgbTo256(c [3]uint8) int {
 
 // pxCell renders one icon cell as a half-block: the top pixel above the bottom
 // pixel inside a single (roughly square) terminal cell. '.' is transparent and
-// shows the terminal background, so the gem floats. Color is quantized to the
+// shows the terminal background, so the sprite floats. Color is quantized to the
 // xterm-256 cube so it renders identically with or without truecolor; callers
 // reset color at row end. Under NO_COLOR it degrades to a plain silhouette.
 func pxCell(top, bottom byte) string {
