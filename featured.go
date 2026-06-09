@@ -304,40 +304,44 @@ func printFeaturedTable(servers []franchise.Server) {
 	}
 }
 
-// addressColumn renders inline host:port for direct partners, or a
-// resolve-on-download tag for experience/gathering rows.
+// addressColumn renders inline host:port once a row has an address (resolved
+// or direct), or a resolve-on-download placeholder for experience/gathering
+// rows that haven't been resolved yet.
 func addressColumn(s franchise.Server) string {
+	if s.HasAddress() {
+		return s.Address()
+	}
 	switch s.Kind {
 	case franchise.KindGathering:
 		return "(live event)"
 	case franchise.KindPartnerExperience:
 		return "(experience-join)"
 	}
-	if s.HasAddress() {
-		return s.Address()
-	}
 	return "(no address)"
 }
 
 func tagFor(s franchise.Server) (tag, color string) {
-	switch s.Kind {
-	case franchise.KindGathering:
-		return "[EVT]", colorYellow
-	case franchise.KindPartnerExperience:
-		return "[EXP]", colorCyan
-	}
-	switch {
-	case !s.HasAddress(), !s.Online:
+	if !s.HasAddress() {
+		switch s.Kind {
+		case franchise.KindGathering:
+			return "[EVT]", colorYellow
+		case franchise.KindPartnerExperience:
+			return "[EXP]", colorCyan
+		}
 		return "[OFF]", colorRed
-	default:
-		return "[ON]", colorGreen
 	}
+	if !s.Online {
+		return "[OFF]", colorRed
+	}
+	return "[ON]", colorGreen
 }
 
 func statusFor(s franchise.Server) string {
-	switch s.Kind {
-	case franchise.KindGathering, franchise.KindPartnerExperience:
-		return "resolve on download"
+	if !s.HasAddress() {
+		if s.Kind == franchise.KindGathering || s.Kind == franchise.KindPartnerExperience {
+			return "resolve on download"
+		}
+		return "offline"
 	}
 	if !s.Online {
 		return "offline"

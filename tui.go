@@ -69,19 +69,23 @@ const (
 )
 
 // section is one row of the main menu, with a help line shown when it's
-// highlighted.
+// highlighted. group lays out related rows together with a blank-line break.
 type section struct {
 	label  string
 	desc   string
 	target screen
+	group  int
 }
 
+// Ordered by workflow and grouped with blank-line breaks: pick a server to
+// pull packs from, then your own saved/recent servers, then work with what
+// you've already downloaded.
 var sections = []section{
-	{"Featured servers", "Browse Mojang's live catalog and pick one or more.", screenFeatured},
-	{"Saved servers", "Addresses you saved for quick re-use.", screenSaved},
-	{"Recent addresses", "Addresses you entered recently, with their last result.", screenRecent},
-	{"Decrypt packs", "Decrypt packs you've downloaded - or fetch what's missing.", screenDecrypt},
-	{"Enter a server address", "Type any host:port, e.g. play.example.net:19132.", screenAddress},
+	{"Featured servers", "Browse Mojang's live catalog and pick one or more.", screenFeatured, 0},
+	{"Enter a server address", "Type any host:port, e.g. play.example.net:19132.", screenAddress, 0},
+	{"Saved servers", "Addresses you saved for quick re-use.", screenSaved, 1},
+	{"Recent addresses", "Addresses you entered recently, with their last result.", screenRecent, 1},
+	{"Decrypt packs", "Decrypt packs you've downloaded - or fetch what's missing.", screenDecrypt, 2},
 }
 
 func sectionTitle(target screen) string {
@@ -113,11 +117,12 @@ type appModel struct {
 	width      int
 	store      store
 
-	featured tuiModel      // featured-list state (screenFeatured)
-	list     addrListModel // saved/recent/decrypt cursor + selection
-	addr     addrModel
-	loadErr  error
-	note     string // transient confirmation (e.g. "saved"), cleared on next key
+	featured          tuiModel      // featured-list state (screenFeatured)
+	list              addrListModel // saved/recent/decrypt cursor + selection
+	addr              addrModel
+	loadErr           error
+	resolvingFeatured bool   // a ^r bulk experience/event resolve is in flight
+	note              string // transient confirmation (e.g. "saved"), cleared on next key
 
 	// decrypt section: remembered downloads + their live on-disk state,
 	// index-aligned. m.list (cursor/selection) indexes both.
@@ -166,6 +171,55 @@ func loadCatalogCmd(ts oauth2.TokenSource) tea.Cmd {
 	}
 }
 
+// featuredResolvedMsg carries the catalog with experience/event rows resolved
+// to real host:port (and pinged) after a ^r press.
+type featuredResolvedMsg struct{ servers []franchise.Server }
+
+// featuredHasUnresolved reports whether any experience/event row still lacks a
+// concrete address (so ^r has something to do).
+func featuredHasUnresolved(servers []franchise.Server) bool {
+	for _, s := range servers {
+		if !s.HasAddress() && (s.Kind == franchise.KindPartnerExperience || s.Kind == franchise.KindGathering) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveExperiencesCmd resolves every experience-join / live-event row to a
+// real host:port and pings it, so the featured list can show actual IPs and
+// online status instead of placeholders. Rows that can't resolve (offline / no
+// active venue) are left as-is.
+func resolveExperiencesCmd(client *franchise.Client, servers []franchise.Server) tea.Cmd {
+	return func() tea.Msg {
+		out := append([]franchise.Server(nil), servers...)
+		ctx, cancel := context.WithTimeout(context.Background(), featuredAPITimeout)
+		defer cancel()
+		for i := range out {
+			s := &out[i]
+			if s.HasAddress() || (s.Kind != franchise.KindPartnerExperience && s.Kind != franchise.KindGathering) {
+				continue
+			}
+			addr, err := resolveAddress(ctx, client, *s)
+			if err != nil {
+				continue
+			}
+			host, portStr, err := net.SplitHostPort(addr)
+			if err != nil {
+				continue
+			}
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				continue
+			}
+			s.Host = host
+			s.Port = port
+		}
+		pingAll(ctx, out)
+		return featuredResolvedMsg{servers: out}
+	}
+}
+
 func (m appModel) Init() tea.Cmd { return nil }
 
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -185,6 +239,14 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenLoading {
 			m.loadErr = msg.err
 			m.screen = screenMenu
+		}
+		return m, nil
+	case featuredResolvedMsg:
+		if m.resolvingFeatured {
+			m.resolvingFeatured = false
+			m.fServers = msg.servers
+			m.featured.servers = msg.servers // same indices, so cursor/picks hold
+			m.featured.applyFilter()
 		}
 		return m, nil
 	case resolvedMsg:
@@ -298,6 +360,13 @@ func (m appModel) handleFeaturedKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// esc/←/enter/→ are handled here so the embedded model's tea.Quit doesn't
 	// leak out and quit the whole program.
 	switch {
+	case key.String() == "ctrl+r":
+		// Resolve every experience/event row to a real host:port + status.
+		if !m.resolvingFeatured && m.fClient != nil && featuredHasUnresolved(m.fServers) {
+			m.resolvingFeatured = true
+			return m, resolveExperiencesCmd(m.fClient, m.fServers)
+		}
+		return m, nil
 	case back(key):
 		if m.featured.filter != "" {
 			m.featured.filter = ""
@@ -713,8 +782,13 @@ func writeRow(b *strings.Builder, selected bool, text string) {
 func (m appModel) menuView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
-	b.WriteString("\n")
+	b.WriteString("  " + colorDim + "Dump, download, and decrypt Minecraft Bedrock resource packs" + colorReset + "\n\n")
+	prevGroup := sections[0].group
 	for i, s := range sections {
+		if s.group != prevGroup {
+			b.WriteString("\n") // air between logical groups
+			prevGroup = s.group
+		}
 		writeRow(&b, i == m.menuCursor, s.label)
 	}
 	b.WriteString("\n  " + colorDim + sections[m.menuCursor].desc + colorReset + "\n")
@@ -738,28 +812,34 @@ func (m appModel) featuredView() string {
 	if s, ok := m.featured.selectedServer(); ok {
 		b.WriteString("\n  " + colorDim + featuredHelp(s) + colorReset + "\n")
 	}
+	if m.resolvingFeatured {
+		b.WriteString("  " + colorCyan + "Resolving experiences..." + colorReset + "\n")
+	}
 	b.WriteString("\n")
-	b.WriteString(hintBar(
-		hint{gUp + gDown, "move"},
-		hint{"space", "select"},
-		hint{gRight + "/" + gEnter, "go"},
-		hint{"a-z", "filter"},
-		hint{gLeft + "/esc", "back"},
-	))
+	hints := []hint{
+		{gUp + gDown, "move"},
+		{"space", "select"},
+		{gRight + "/" + gEnter, "go"},
+	}
+	if featuredHasUnresolved(m.fServers) {
+		hints = append(hints, hint{"^r", "resolve IPs"})
+	}
+	hints = append(hints, hint{"a-z", "filter"}, hint{gLeft + "/esc", "back"})
+	b.WriteString(hintBar(hints...))
 	return b.String()
 }
 
 // featuredHelp explains the highlighted row, especially the ones whose
-// address isn't known until download time.
+// address isn't known until it's resolved.
 func featuredHelp(s franchise.Server) string {
-	switch s.Kind {
-	case franchise.KindGathering:
-		return "Live event - its address is resolved when you download."
-	case franchise.KindPartnerExperience:
-		return "Experience server - its address is resolved when you download."
-	}
 	if s.HasAddress() {
 		return "Direct address: " + s.Address()
+	}
+	switch s.Kind {
+	case franchise.KindGathering:
+		return "Live event - press ^r to resolve its address (or it resolves on download)."
+	case franchise.KindPartnerExperience:
+		return "Experience server - press ^r to resolve its address (or it resolves on download)."
 	}
 	return "No public address for this entry."
 }
@@ -1061,8 +1141,9 @@ func (m appModel) recentStatusLabel(addr string) string {
 
 // decryptState is the live on-disk picture of a remembered download.
 type decryptState struct {
-	packs   int  // pack folders that still contain a contents.json
-	hasKeys bool // the keys file is present
+	packs     int  // pack folders that still contain a contents.json
+	hasKeys   bool // the keys file is present
+	decrypted bool // a decrypted/<server>/ output already exists
 }
 
 func (d decryptState) decryptable() bool { return d.packs > 0 && d.hasKeys }
@@ -1086,6 +1167,11 @@ func inspectDownload(d download) decryptState {
 		if _, err := os.Stat(filepath.Join(d.Dir, e.Name(), contentsJSON)); err == nil {
 			st.packs++
 		}
+	}
+	// Already-decrypted output (re-decrypting just overwrites it, so this is
+	// only a hint, not a lock).
+	if out, err := os.ReadDir(decryptOutBase(d.Dir, d.Address)); err == nil && len(out) > 0 {
+		st.decrypted = true
 	}
 	return st
 }
@@ -1212,7 +1298,11 @@ func decryptBadge(st decryptState) string {
 	if st.hasKeys {
 		keys = colorGreen + "keys" + colorReset
 	}
-	return colorDim + fmt.Sprintf("%d packs · ", st.packs) + colorReset + keys
+	badge := colorDim + fmt.Sprintf("%d packs · ", st.packs) + colorReset + keys
+	if st.decrypted {
+		badge += colorDim + " · decrypted" + colorReset
+	}
+	return badge
 }
 
 func decryptHelp(st decryptState, hasAddr bool) string {

@@ -41,7 +41,7 @@ func TestTuiModel_EnterPicksCursorWhenNoneSelected(t *testing.T) {
 }
 
 func TestAppModel_MenuToAddressAndBack(t *testing.T) {
-	var m tea.Model = appModel{screen: screenMenu, menuCursor: 4} // "Enter a server address"
+	var m tea.Model = appModel{screen: screenMenu, menuCursor: 1} // "Enter a server address"
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.(appModel).screen != screenAddress {
 		t.Fatalf("enter on address row should open screenAddress, got %d", m.(appModel).screen)
@@ -54,7 +54,7 @@ func TestAppModel_MenuToAddressAndBack(t *testing.T) {
 
 func TestAppModel_RightArrowDrillsInLeftArrowBacks(t *testing.T) {
 	// Right arrow opens the highlighted section; left arrow returns.
-	var m tea.Model = appModel{screen: screenMenu, menuCursor: 1} // "Saved servers"
+	var m tea.Model = appModel{screen: screenMenu, menuCursor: 2} // "Saved servers"
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	if m.(appModel).screen != screenSaved {
 		t.Fatalf("right arrow should open screenSaved, got %d", m.(appModel).screen)
@@ -316,6 +316,37 @@ func TestRecentStatusLabel(t *testing.T) {
 	}
 	if got := m.recentStatusLabel("missing"); got != "" {
 		t.Errorf("unknown address label = %q, want empty", got)
+	}
+}
+
+func TestFeaturedDisplay_ResolvedExperience(t *testing.T) {
+	// A resolved experience row shows its IP + online status, not the placeholder.
+	r := franchise.Server{Kind: franchise.KindPartnerExperience, Name: "Exp", Host: "1.2.3.4", Port: 19132, Online: true, Players: 340}
+	if got := addressColumn(r); got != "1.2.3.4:19132" {
+		t.Errorf("resolved addressColumn = %q, want the IP", got)
+	}
+	if tag, _ := tagFor(r); tag != "[ON]" {
+		t.Errorf("resolved tag = %q, want [ON]", tag)
+	}
+	// Unresolved experience keeps its placeholder + [EXP] tag.
+	u := franchise.Server{Kind: franchise.KindPartnerExperience, Name: "Exp2"}
+	if got := addressColumn(u); got != "(experience-join)" {
+		t.Errorf("unresolved addressColumn = %q", got)
+	}
+	if tag, _ := tagFor(u); tag != "[EXP]" {
+		t.Errorf("unresolved tag = %q, want [EXP]", tag)
+	}
+}
+
+func TestFeaturedHasUnresolved(t *testing.T) {
+	if !featuredHasUnresolved([]franchise.Server{
+		{Kind: franchise.KindPartnerDirect, Host: "h", Port: 1},
+		{Kind: franchise.KindPartnerExperience}, // unresolved
+	}) {
+		t.Error("should detect an unresolved experience")
+	}
+	if featuredHasUnresolved([]franchise.Server{{Kind: franchise.KindPartnerExperience, Host: "h", Port: 2}}) {
+		t.Error("a resolved experience is not unresolved")
 	}
 }
 
