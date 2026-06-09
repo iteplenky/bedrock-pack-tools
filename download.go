@@ -380,7 +380,6 @@ Examples:
 	fmt.Println("\n  ┌─ Pack Downloader ─────────────────────────")
 	fmt.Println("  │ Server: " + server)
 	fmt.Println("  │ Output: " + outDir)
-	fmt.Println("  │ Keys:   " + keysFile)
 	fmt.Println("  └──────────────────────────────────────────")
 
 	tokenSource, err := getTokenSource()
@@ -440,6 +439,16 @@ Examples:
 			fmt.Printf("\n  Downloaded %d/%d packs via CDN.\n", cdnCount, total)
 			if keyCount > 0 {
 				fmt.Printf("  Keys: %d -> %s\n", keyCount, keysFile)
+				if decrypt {
+					fmt.Println()
+					if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
+						fmt.Printf("\n  Decrypt step failed: %v\n", derr)
+						fmt.Printf("  Packs and keys are saved - rerun:  bedrock-pack-tools decrypt --all %s %s\n\n", keysFile, outDir)
+						return errPartialResult
+					}
+					fmt.Println()
+					return nil
+				}
 				fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
 			} else {
 				fmt.Println("  Packs are unencrypted - ready to use, no decryption needed.")
@@ -452,7 +461,15 @@ Examples:
 			fmt.Printf("\n  Connection closed after %.1fs, but %d packs downloaded via CDN\n", elapsed.Seconds(), cdnCount)
 			if keyCount > 0 {
 				fmt.Printf("  Keys: %d -> %s\n", keyCount, keysFile)
-				fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+				if decrypt {
+					fmt.Println()
+					if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
+						fmt.Printf("\n  Decrypt step failed: %v\n", derr)
+						fmt.Printf("  Packs and keys are saved - rerun:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+					}
+				} else {
+					fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+				}
 			}
 			fmt.Println()
 			return errPartialResult
@@ -460,7 +477,7 @@ Examples:
 		if keyCount > 0 {
 			fmt.Printf("\n  Connection closed after %.1fs, but %d keys saved -> %s\n", elapsed.Seconds(), keyCount, keysFile)
 			fmt.Println("  Packs could not be downloaded (server didn't complete handshake).")
-			fmt.Println("  Use 'keys' command + local pack cache for this server.")
+			fmt.Printf("  Retry:  bedrock-pack-tools download %s\n", server)
 			return errPartialResult
 		}
 		return fmt.Errorf("connection to %s failed: %w", server, err)

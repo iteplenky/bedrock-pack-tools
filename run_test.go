@@ -175,7 +175,7 @@ func TestCleanLogLine(t *testing.T) {
 		"",
 		"  CDN download: 6b90 v1.3.360 from https://cdn.example/x.zip?sig=abc",
 		"  ┌─ Pack Downloader ──",
-		"  │ Keys:   srv_keys.json",
+		"  │ Output: ./packs",
 		"  └────────",
 		"  Downloading: 31.1 MB (631 KB/s)",
 	}
@@ -206,10 +206,11 @@ func TestInterpretExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-based exit-code check is POSIX-only")
 	}
-	// Exit code 2 is errPartialResult - treated as a soft success.
+	// Exit code 2 maps to errPartialResult - useful output landed, but the run
+	// wasn't fully done, so the Done screen can mark it [partial] not [ok].
 	err2 := exec.Command("sh", "-c", "exit 2").Run()
-	if interpretExit(err2) != nil {
-		t.Errorf("exit code 2 should map to nil, got %v", interpretExit(err2))
+	if !errors.Is(interpretExit(err2), errPartialResult) {
+		t.Errorf("exit code 2 should map to errPartialResult, got %v", interpretExit(err2))
 	}
 	// Any other non-zero is a real failure.
 	err1 := exec.Command("sh", "-c", "exit 1").Run()

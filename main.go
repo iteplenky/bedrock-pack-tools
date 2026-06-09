@@ -14,7 +14,7 @@
 //
 //	bedrock-pack-tools                                  (no command: interactive menu)
 //	bedrock-pack-tools keys     <server:port> [output.json]
-//	bedrock-pack-tools download [--decrypt] <server:port> [output-dir]
+//	bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
 //	bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
 //	bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
 //	bedrock-pack-tools encrypt  <pack-dir> [key] [output.mcpack]
@@ -138,7 +138,7 @@ func printUsage() {
 Usage:
   bedrock-pack-tools                                  (no command: interactive menu)
   bedrock-pack-tools keys     <server:port> [output.json]
-  bedrock-pack-tools download [--decrypt] <server:port> [output-dir]
+  bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
   bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
   bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
   bedrock-pack-tools encrypt  [--key-out PATH] <pack-dir> [key] [output.mcpack]

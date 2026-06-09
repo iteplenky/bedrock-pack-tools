@@ -474,7 +474,9 @@ func TestAppModel_EncryptEnter(t *testing.T) {
 }
 
 func TestAppModel_SettingsConfirm(t *testing.T) {
-	m := appModel{screen: screenSettings, store: store{Saved: []string{"a:1"}, Recent: []string{"b:2"}}}
+	// Row 0 is the sign-in/out toggle; the maintenance rows always follow it,
+	// so "Clear saved and recent" is at index 1 regardless of auth state.
+	m := appModel{screen: screenSettings, settingsCursor: 1, store: store{Saved: []string{"a:1"}, Recent: []string{"b:2"}}}
 	var tm tea.Model = m
 	// first enter only arms the confirm
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -489,7 +491,7 @@ func TestAppModel_SettingsConfirm(t *testing.T) {
 		t.Fatalf("y should clear: confirm=%d saved=%d recent=%d", am.confirm, len(am.store.Saved), len(am.store.Recent))
 	}
 	// arm again, then esc cancels (store untouched)
-	m2 := appModel{screen: screenSettings, store: store{Saved: []string{"x:1"}}}
+	m2 := appModel{screen: screenSettings, settingsCursor: 1, store: store{Saved: []string{"x:1"}}}
 	var t2 tea.Model = m2
 	t2, _ = t2.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	t2, _ = t2.(appModel).Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -498,7 +500,7 @@ func TestAppModel_SettingsConfirm(t *testing.T) {
 	}
 }
 
-func TestAppModel_AccountLogout(t *testing.T) {
+func TestAppModel_SettingsLogout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("config dir is not HOME-derived on windows")
 	}
@@ -512,17 +514,19 @@ func TestAppModel_AccountLogout(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"access_token":"x","refresh_token":"y"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Row 0 of Settings is the sign-in/out toggle. With a token on disk it reads
+	// "Sign out", so enter arms confirmLogout.
 	m := appModel{
-		screen:        screenAccount,
-		accountCursor: 1, // "Log out"
-		ts:            oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"}),
-		fClient:       &franchise.Client{},
-		fServers:      []franchise.Server{{}},
+		screen:         screenSettings,
+		settingsCursor: 0,
+		ts:             oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"}),
+		fClient:        &franchise.Client{},
+		fServers:       []franchise.Server{{}},
 	}
 	var tm tea.Model = m
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter}) // arm
 	if tm.(appModel).confirm != confirmLogout {
-		t.Fatalf("Log out should arm confirmLogout, got %d", tm.(appModel).confirm)
+		t.Fatalf("Sign out should arm confirmLogout, got %d", tm.(appModel).confirm)
 	}
 	tm, _ = tm.(appModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
@@ -534,7 +538,7 @@ func TestAppModel_AccountLogout(t *testing.T) {
 		t.Errorf("logout left in-memory session: ts=%v fClient=%v fServers=%v", am.ts, am.fClient, am.fServers)
 	}
 
-	// Signed out, opening Featured routes to Account instead of fetching the
+	// Signed out, opening Featured routes to Settings instead of fetching the
 	// catalog with no credentials.
 	out := appModel{screen: screenMenu, menuCursor: 0} // Featured is the first section
 	if sections[0].target != screenFeatured {
@@ -542,8 +546,8 @@ func TestAppModel_AccountLogout(t *testing.T) {
 	}
 	var om tea.Model = out
 	om, cmd := om.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if am := om.(appModel); am.screen != screenAccount || cmd != nil {
-		t.Errorf("signed-out Featured should route to Account with no fetch: screen=%d cmd=%v", am.screen, cmd)
+	if am := om.(appModel); am.screen != screenSettings || cmd != nil {
+		t.Errorf("signed-out Featured should route to Settings with no fetch: screen=%d cmd=%v", am.screen, cmd)
 	}
 }
 
@@ -564,5 +568,42 @@ func TestAppModel_MenuViewLists(t *testing.T) {
 	v := appModel{screen: screenMenu}.View()
 	if !strings.Contains(v, "Featured servers") || !strings.Contains(v, "Enter a server address") {
 		t.Error("menu view should list the sections")
+	}
+}
+
+// TestAppModel_PartialResult: a child that exits 2 (errPartialResult) is marked
+// [partial] on the Done screen, not counted as a clean success.
+func TestAppModel_PartialResult(t *testing.T) {
+	m := appModel{
+		screen: screenRunning,
+		jobs:   []job{{label: "srv", address: "a:1"}},
+		act:    actionDownloadDecrypt,
+	}
+	var tm tea.Model = m
+	tm, _ = tm.Update(jobFinishedMsg{err: errPartialResult, detail: "Decrypt step failed: bad key"})
+	am := tm.(appModel)
+	if am.screen != screenDone {
+		t.Fatalf("expected screenDone, got %d", am.screen)
+	}
+	if len(am.results) != 1 || !am.results[0].partial || am.results[0].err != nil {
+		t.Fatalf("result not marked partial: %+v", am.results)
+	}
+	v := am.View()
+	if !strings.Contains(v, "[partial]") || !strings.Contains(v, "0/1 succeeded") {
+		t.Errorf("done view should show [partial] and 0/1 succeeded:\n%s", v)
+	}
+}
+
+// TestStartRun_SignedOutGuard: signed out, a download/keys job (no argv) is
+// blocked and routed to Settings; an offline encrypt job (argv set) proceeds.
+func TestStartRun_SignedOutGuard(t *testing.T) {
+	m := appModel{screen: screenSaved} // ts == nil
+	nm, _ := m.startRun([]job{{label: "srv", address: "a:1"}}, actionDownload)
+	if nm.screen != screenSettings || nm.note == "" {
+		t.Errorf("signed-out download should route to Settings: screen=%d note=%q", nm.screen, nm.note)
+	}
+	em, _ := m.startRun([]job{{label: "pack", argv: []string{"encrypt", "/tmp/pack"}}}, actionDownload)
+	if em.screen != screenRunning {
+		t.Errorf("offline encrypt job should run even when signed out: screen=%d", em.screen)
 	}
 }

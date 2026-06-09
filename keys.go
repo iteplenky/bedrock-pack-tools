@@ -143,7 +143,7 @@ Examples:
 	if keyCount > 0 {
 		fmt.Printf("  Saved %d keys -> %s\n\n", keyCount, outFile)
 	} else {
-		fmt.Println("\n  No encryption keys found.")
+		fmt.Println("\n  No encryption keys found - nothing written to " + outFile + ".")
 	}
 	return nil
 }

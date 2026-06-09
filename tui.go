@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -64,8 +65,7 @@ const (
 	screenDecrypt // decrypt packs from remembered download locations
 	screenEncrypt // encrypt a local pack folder into a .mcpack
 	screenAddress
-	screenAccount  // sign in / out of Xbox Live
-	screenSettings // maintenance actions
+	screenSettings // sign in / out + maintenance actions
 	screenAction   // pick download / download+decrypt / keys for the chosen targets
 	screenRunning  // a job queue executing, with live output
 	screenDone     // per-target summary, any key returns to the menu
@@ -90,8 +90,7 @@ var sections = []section{
 	{"Recent addresses", "Addresses you entered recently, with their last result.", screenRecent, 1},
 	{"Decrypt packs", "Decrypt packs you've downloaded - or fetch what's missing.", screenDecrypt, 2},
 	{"Encrypt a pack", "Package a local pack folder into a .mcpack + .mcpack.key.", screenEncrypt, 2},
-	{"Account", "Sign in or out of Xbox Live.", screenAccount, 3},
-	{"Settings", "Clear saved data and downloads, or reset the featured cohort.", screenSettings, 3},
+	{"Settings", "Sign in or out, clear saved data, or reset the featured cohort.", screenSettings, 3},
 }
 
 func sectionTitle(target screen) string {
@@ -124,34 +123,38 @@ func confirmPrompt(k confirmKind) string {
 	case confirmClearDownloads:
 		return "Forget download history? (packs on disk are kept)"
 	case confirmResetCohort:
-		return "Reset the featured cohort? (a new device id is generated)"
+		return "Reset the featured cohort? Reopen Featured to see the new list."
 	}
 	return ""
 }
 
-// accountChoice is a row on the Account screen.
-type accountChoice struct {
-	label string
-	desc  string
-	login bool // true = Log in, false = Log out
-}
-
-var accountChoices = []accountChoice{
-	{"Log in", "Run Xbox device sign-in - a URL and code will appear.", true},
-	{"Log out", "Forget the cached Xbox token and franchise session.", false},
-}
-
-// settingsItem is a row on the Settings screen; each arms a y/n confirm.
+// settingsItem is a row on the Settings screen. Maintenance rows arm a y/n
+// confirm; the sign-in row (signIn=true) hands off to the device flow with no
+// confirm.
 type settingsItem struct {
 	label   string
 	desc    string
 	confirm confirmKind
+	signIn  bool
 }
 
-var settingsItems = []settingsItem{
-	{"Clear saved and recent", "Forget your saved servers and recent addresses.", confirmClearAddrs},
-	{"Clear download history", "Forget where past downloads landed (packs on disk are kept).", confirmClearDownloads},
-	{"Reset featured cohort", "Roll a new device id - the featured list may change.", confirmResetCohort},
+// maintenanceItems are the destructive housekeeping rows, shown beneath the
+// sign-in/out row regardless of auth state.
+var maintenanceItems = []settingsItem{
+	{"Clear saved and recent", "Forget your saved servers and recent addresses.", confirmClearAddrs, false},
+	{"Clear download history", "Forget where past downloads landed (packs on disk are kept).", confirmClearDownloads, false},
+	{"Reset featured cohort", "Roll a new device id - reopen Featured for a fresh list.", confirmResetCohort, false},
+}
+
+// settingsRows is the live Settings list: a state-aware sign-in/out row on top
+// (you're always signed in when the menu opens, so it reads "Sign out" until
+// you sign out in-session), then the maintenance rows.
+func settingsRows(signedIn bool) []settingsItem {
+	auth := settingsItem{"Sign in", "Run Xbox device sign-in - a URL and code will appear.", confirmNone, true}
+	if signedIn {
+		auth = settingsItem{"Sign out", "Forget the cached Xbox token and franchise session.", confirmLogout, false}
+	}
+	return append([]settingsItem{auth}, maintenanceItems...)
 }
 
 // runLogTail is how many committed output lines the running screen shows.
@@ -182,9 +185,9 @@ type appModel struct {
 	loadErr           error
 	resolvingFeatured bool   // a ^r bulk experience/event resolve is in flight
 	note              string // transient confirmation (e.g. "saved"), cleared on next key
+	noteErr           bool   // the note is a failure (render it red, not green)
 
-	// account / settings cursors + a shared y/n confirm for destructive actions.
-	accountCursor  int
+	// settings cursor + a shared y/n confirm for destructive actions.
 	settingsCursor int
 	confirm        confirmKind
 
@@ -309,6 +312,24 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case featuredResolvedMsg:
 		if m.resolvingFeatured {
 			m.resolvingFeatured = false
+			// Count rows that were unresolved before and now carry an address,
+			// so ^r gives feedback instead of silently swapping the list.
+			gained := 0
+			for i := range msg.servers {
+				if i < len(m.fServers) {
+					old := m.fServers[i]
+					wasUnresolved := !old.HasAddress() &&
+						(old.Kind == franchise.KindPartnerExperience || old.Kind == franchise.KindGathering)
+					if wasUnresolved && msg.servers[i].HasAddress() {
+						gained++
+					}
+				}
+			}
+			if gained > 0 {
+				m.note = "resolved " + pluralServers(gained)
+			} else {
+				m.note, m.noteErr = "no addresses resolved right now", true
+			}
 			m.fServers = msg.servers
 			m.featured.servers = msg.servers // same indices, so cursor/picks hold
 			m.featured.applyFilter()
@@ -336,6 +357,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusLn = msg.text
 		} else if line, ok := cleanLogLine(msg.text); ok {
 			m.logLines = append(m.logLines, line)
+			if m.statusLn == "Starting..." {
+				m.statusLn = "" // the first committed line is the live signal now
+			}
 		}
 		if m.runCh != nil {
 			return m, waitRun(m.runCh)
@@ -356,7 +380,7 @@ func (m appModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
-	m.note = "" // any key clears a transient confirmation; setters re-set it below
+	m.note, m.noteErr = "", false // any key clears a transient note; setters re-set it below
 	if m.confirm != confirmNone {
 		if key.String() == "y" {
 			return m.runConfirmed()
@@ -383,8 +407,6 @@ func (m appModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEncryptKey(key)
 	case screenAddress:
 		return m.handleAddressKey(key)
-	case screenAccount:
-		return m.handleAccountKey(key)
 	case screenSettings:
 		return m.handleSettingsKey(key)
 	case screenAction:
@@ -418,14 +440,14 @@ func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if forward(key) {
+		m.loadErr = nil // any drill-in dismisses a stale "could not load featured servers" banner
 		switch sections[m.menuCursor].target {
 		case screenFeatured:
-			m.loadErr = nil
 			if m.ts == nil { // signed out: nothing to authenticate the catalog fetch
-				m.accountCursor = 0
+				m.settingsCursor = 0 // lands on the Sign in row
 				m.confirm = confirmNone
 				m.note = "sign in first to browse featured servers"
-				m.screen = screenAccount
+				m.screen = screenSettings
 				return m, nil
 			}
 			if m.fServers != nil { // reuse the catalog from an earlier visit
@@ -449,10 +471,6 @@ func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case screenAddress:
 			m.addr = textField{}
 			m.screen = screenAddress
-		case screenAccount:
-			m.accountCursor = 0
-			m.confirm = confirmNone
-			m.screen = screenAccount
 		case screenSettings:
 			m.settingsCursor = 0
 			m.confirm = confirmNone
@@ -506,21 +524,33 @@ func (m appModel) handleListKey(key tea.KeyMsg, isRecent bool) (tea.Model, tea.C
 	case " ":
 		m.list.toggle()
 	case "d":
-		if addr, ok := m.list.current(); ok {
+		// Delete acts on the picked set (or the cursor row when nothing is
+		// picked), matching what enter/go operate on.
+		addrs := m.list.confirmed()
+		for _, addr := range addrs {
 			if isRecent {
 				m.store.removeRecent(addr)
-				m.list = newAddrList(m.store.Recent)
 			} else {
 				m.store.removeSaved(addr)
+			}
+		}
+		if len(addrs) > 0 {
+			if isRecent {
+				m.list = newAddrList(m.store.Recent)
+			} else {
 				m.list = newAddrList(m.store.Saved)
 			}
+			m.note = "forgot " + pluralAddrs(len(addrs))
 		}
 		return m, nil
 	case "s":
 		if isRecent {
-			if addr, ok := m.list.current(); ok {
+			addrs := m.list.confirmed()
+			for _, addr := range addrs {
 				m.store.addSaved(addr)
-				m.note = "saved " + addr
+			}
+			if len(addrs) > 0 {
+				m.note = "saved " + pluralAddrs(len(addrs))
 			}
 		}
 		return m, nil
@@ -603,37 +633,15 @@ func (m appModel) handleActionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m appModel) handleAccountKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "up":
-		if m.accountCursor > 0 {
-			m.accountCursor--
-		}
-	case "down":
-		if m.accountCursor < len(accountChoices)-1 {
-			m.accountCursor++
-		}
-	}
-	switch {
-	case back(key):
-		m.screen = screenMenu
-	case forward(key):
-		if accountChoices[m.accountCursor].login {
-			return m, loginCmd() // hands the terminal to the device-code flow
-		}
-		m.confirm = confirmLogout
-	}
-	return m, nil
-}
-
 func (m appModel) handleSettingsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := settingsRows(loadToken() != nil)
 	switch key.String() {
 	case "up":
 		if m.settingsCursor > 0 {
 			m.settingsCursor--
 		}
 	case "down":
-		if m.settingsCursor < len(settingsItems)-1 {
+		if m.settingsCursor < len(rows)-1 {
 			m.settingsCursor++
 		}
 	}
@@ -641,7 +649,11 @@ func (m appModel) handleSettingsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case back(key):
 		m.screen = screenMenu
 	case forward(key):
-		m.confirm = settingsItems[m.settingsCursor].confirm
+		it := rows[min(m.settingsCursor, len(rows)-1)]
+		if it.signIn {
+			return m, loginCmd() // hands the terminal to the device-code flow
+		}
+		m.confirm = it.confirm
 	}
 	return m, nil
 }
@@ -652,7 +664,7 @@ func (m appModel) runConfirmed() (tea.Model, tea.Cmd) {
 	case confirmLogout:
 		wasSignedIn := loadToken() != nil
 		if err := clearAuthCaches(); err != nil {
-			m.note = "logout failed: " + err.Error()
+			m.note, m.noteErr = "logout failed: "+err.Error(), true
 		} else {
 			// Drop the in-memory session too, not just the disk caches: the
 			// refresh-token source and franchise client would otherwise keep
@@ -675,9 +687,14 @@ func (m appModel) runConfirmed() (tea.Model, tea.Cmd) {
 		m.note = "cleared download history"
 	case confirmResetCohort:
 		if err := resetDeviceID(); err != nil {
-			m.note = "reset failed: " + err.Error()
+			m.note, m.noteErr = "reset failed: "+err.Error(), true
 		} else {
-			m.note = "featured cohort reset"
+			// Drop the cached catalog + client so the next Featured open builds a
+			// fresh client (new device id, no seeded token) and shows the new
+			// cohort - otherwise the reset wouldn't take effect until next launch.
+			m.fServers = nil
+			m.fClient = nil
+			m.note = "cohort reset - reopen Featured to refresh"
 		}
 	}
 	m.confirm = confirmNone
@@ -735,6 +752,20 @@ func validatePackDir(s string) (string, error) {
 
 // startRun resets the live state and kicks off the queue of jobs.
 func (m appModel) startRun(jobs []job, act action) (appModel, tea.Cmd) {
+	// download/keys jobs re-exec an auth-requiring child; encrypt/decrypt run
+	// offline. When signed out the auth child would stall on a device-code
+	// prompt buried in the capture pipe, so route the user to Settings instead.
+	if m.ts == nil {
+		for _, j := range jobs {
+			if j.needsAuth() {
+				m.settingsCursor = 0 // lands on the Sign in row
+				m.confirm = confirmNone
+				m.note = "sign in first - Settings > Sign in"
+				m.screen = screenSettings
+				return m, nil
+			}
+		}
+	}
 	// Runs launched straight from the decrypt/encrypt sections set their own
 	// breadcrumb origin (the action picker already set actionFrom otherwise).
 	if m.screen == screenDecrypt || m.screen == screenEncrypt {
@@ -890,15 +921,27 @@ func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 			j.outDir = ""
 		}
 	}
-	resErr := msg.err
-	if resErr != nil && msg.detail != "" {
-		resErr = fmt.Errorf("%s", msg.detail) // the child's real last line, not just "exited with code N"
-	}
-	m.results = append(m.results, jobResult{label: j.label, err: resErr, outDir: j.outDir})
-	if resErr != nil {
+	switch {
+	case msg.err == nil:
+		m.results = append(m.results, jobResult{label: j.label, outDir: j.outDir})
+		m.recordOutcome(j, true)
+	case errors.Is(msg.err, errPartialResult):
+		// Exit 2: packs or keys genuinely landed, just not the whole run.
+		// Keep the decrypt-section entry, but don't claim a clean success.
+		m.results = append(m.results, jobResult{label: j.label, partial: true, detail: msg.detail, outDir: j.outDir})
+		if msg.detail != "" {
+			m.logLines = append(m.logLines, "[partial] "+msg.detail)
+		}
+		m.recordOutcome(j, true)
+	default:
+		resErr := msg.err
+		if msg.detail != "" {
+			resErr = fmt.Errorf("%s", msg.detail) // the child's real last line, not just "exited with code N"
+		}
+		m.results = append(m.results, jobResult{label: j.label, err: resErr, outDir: j.outDir})
 		m.logLines = append(m.logLines, "[err] "+resErr.Error())
+		m.recordOutcome(j, false)
 	}
-	m.recordOutcome(j, msg.err == nil)
 	m.runProc = nil
 	m.runCh = nil
 	m.paused = false
@@ -945,6 +988,7 @@ func (m appModel) toMenu() appModel {
 	m.logLines = nil
 	m.statusLn = ""
 	m.note = ""
+	m.noteErr = false
 	m.paused = false
 	m.canceled = false
 	return m
@@ -955,7 +999,7 @@ func (m appModel) toMenu() appModel {
 func (m appModel) View() string {
 	switch m.screen {
 	case screenLoading:
-		return m.crumb() + "\n  Loading featured servers...\n"
+		return m.crumb() + "\n  Loading featured servers...\n\n" + hintBar(hint{gLeft + "/esc", "cancel"})
 	case screenFeatured:
 		return m.featuredView()
 	case screenSaved:
@@ -968,8 +1012,6 @@ func (m appModel) View() string {
 		return m.encryptView()
 	case screenAddress:
 		return m.addressView()
-	case screenAccount:
-		return m.accountView()
 	case screenSettings:
 		return m.settingsView()
 	case screenAction:
@@ -990,7 +1032,7 @@ func (m appModel) crumb() string {
 	switch m.screen {
 	case screenLoading:
 		trail = append(trail, sectionTitle(screenFeatured), "Loading")
-	case screenFeatured, screenSaved, screenRecent, screenDecrypt, screenEncrypt, screenAddress, screenAccount, screenSettings:
+	case screenFeatured, screenSaved, screenRecent, screenDecrypt, screenEncrypt, screenAddress, screenSettings:
 		trail = append(trail, sectionTitle(m.screen))
 	case screenAction:
 		trail = append(trail, sectionTitle(m.actionFrom), "Choose an action")
@@ -1064,7 +1106,7 @@ func (m appModel) menuView() string {
 	b.WriteString(hintBar(
 		hint{gUp + gDown, "move"},
 		hint{gRight + "/" + gEnter, "open"},
-		hint{gLeft + "/esc", "quit"},
+		hint{gLeft + "/esc/q", "quit"},
 	))
 	return b.String()
 }
@@ -1074,22 +1116,41 @@ func (m appModel) featuredView() string {
 	b.WriteString(m.crumb())
 	m.featured.width = m.width // for row truncation (m is a copy; render-only)
 	b.WriteString(m.featured.View())
-	if s, ok := m.featured.selectedServer(); ok {
+	// The per-row help describes the cursor row, which is only the action target
+	// when nothing is picked (enter acts on the picked set otherwise).
+	if s, ok := m.featured.selectedServer(); ok && len(m.featured.picked) == 0 {
 		b.WriteString("\n  " + colorDim + featuredHelp(s) + colorReset + "\n")
 	}
 	if m.resolvingFeatured {
-		b.WriteString("  " + colorCyan + "Resolving experiences..." + colorReset + "\n")
+		b.WriteString("  " + colorCyan + "Resolving addresses..." + colorReset + "\n")
+	}
+	if m.note != "" {
+		noteColor := colorGreen
+		if m.noteErr {
+			noteColor = colorRed
+		}
+		b.WriteString("  " + noteColor + m.note + colorReset + "\n")
 	}
 	b.WriteString("\n")
+	if len(m.featured.servers) == 0 {
+		// Empty catalog - only back does anything; move/space/continue/filter are no-ops.
+		b.WriteString(hintBar(hint{gLeft + "/esc", "back"}))
+		return b.String()
+	}
 	hints := []hint{
 		{gUp + gDown, "move"},
 		{"space", "select"},
-		{gRight + "/" + gEnter, "go"},
+		{gRight + "/" + gEnter, "continue"},
 	}
 	if featuredHasUnresolved(m.fServers) {
 		hints = append(hints, hint{"^r", "resolve IPs"})
 	}
-	hints = append(hints, hint{"a-z", "filter"}, hint{gLeft + "/esc", "back"})
+	hints = append(hints, hint{"type", "filter"})
+	if m.featured.filter != "" {
+		hints = append(hints, hint{gLeft + "/esc", "clear filter"})
+	} else {
+		hints = append(hints, hint{gLeft + "/esc", "back"})
+	}
 	b.WriteString(hintBar(hints...))
 	return b.String()
 }
@@ -1124,8 +1185,9 @@ func (m appModel) listView(emptyMsg string, isRecent bool) string {
 			box = "[x]"
 		}
 		// Wrap only the box+address in the selection color so the status
-		// keeps its own green/red; append it after.
-		cell := clip(box+" "+addr, m.width-3)
+		// keeps its own green/red; append it after. The fixed-width address
+		// lines the status badges into a column, like the decrypt list.
+		cell := clip(box+" "+fmt.Sprintf("%-24s", addr), m.width-3)
 		if i == m.list.cursor {
 			b.WriteString(" " + colorCyan + rowCursor + cell + colorReset)
 		} else {
@@ -1143,12 +1205,12 @@ func (m appModel) listView(emptyMsg string, isRecent bool) string {
 	hints := []hint{
 		{gUp + gDown, "move"},
 		{"space", "select"},
-		{gRight + "/" + gEnter, "go"},
+		{gRight + "/" + gEnter, "continue"},
 	}
 	if isRecent {
 		hints = append(hints, hint{"s", "save"})
 	}
-	hints = append(hints, hint{"d", "delete"}, hint{gLeft + "/esc", "back"})
+	hints = append(hints, hint{"d", "forget"}, hint{gLeft + "/esc", "back"})
 	b.WriteString(hintBar(hints...))
 	return b.String()
 }
@@ -1168,7 +1230,7 @@ func (m appModel) addressView() string {
 	b.WriteString("  " + colorDim + "Example: play.example.net:19132 or 1.2.3.4:19132" + colorReset + "\n\n")
 	b.WriteString(hintBar(
 		hint{gEnter, "continue"},
-		hint{gLeft + gRight, "move"},
+		hint{gLeft + gRight, "move caret"},
 		hint{"^s", "save"},
 		hint{"esc", "back"},
 	))
@@ -1187,16 +1249,18 @@ func (m appModel) encryptView() string {
 	b.WriteString("  " + colorDim + "Point at a folder with a manifest.json, e.g. ./MyPack_v1.0.0" + colorReset + "\n\n")
 	b.WriteString(hintBar(
 		hint{gEnter, "encrypt"},
-		hint{gLeft + gRight, "move"},
+		hint{gLeft + gRight, "move caret"},
 		hint{"esc", "back"},
 	))
 	return b.String()
 }
 
-func (m appModel) accountView() string {
+func (m appModel) settingsView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
-	if loadToken() != nil {
+	b.WriteString("\n")
+	signedIn := loadToken() != nil
+	if signedIn {
 		b.WriteString("  " + colorGreen + "Signed in" + colorReset + "\n")
 	} else {
 		b.WriteString("  " + colorYellow + "Not signed in" + colorReset + "\n")
@@ -1205,50 +1269,28 @@ func (m appModel) accountView() string {
 		b.WriteString("  " + colorDim + "config: " + dir + colorReset + "\n")
 	}
 	b.WriteString("\n")
-	for i, ch := range accountChoices {
-		writeRow(&b, i == m.accountCursor, ch.label)
+	rows := settingsRows(signedIn)
+	cursor := min(m.settingsCursor, len(rows)-1)
+	for i, it := range rows {
+		writeRow(&b, i == cursor, it.label)
 	}
-	b.WriteString("\n  " + colorDim + accountChoices[m.accountCursor].desc + colorReset + "\n")
-	if m.confirm == confirmLogout {
-		b.WriteString("\n  " + colorYellow + confirmPrompt(confirmLogout) + colorReset + "\n")
-		b.WriteString(hintBar(hint{"y", "sign out"}, hint{"n/esc", "cancel"}))
-		return b.String()
-	}
-	if m.note != "" {
-		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
-	}
-	b.WriteString("\n")
-	b.WriteString(hintBar(
-		hint{gUp + gDown, "move"},
-		hint{gRight + "/" + gEnter, "select"},
-		hint{gLeft + "/esc", "back"},
-	))
-	return b.String()
-}
-
-func (m appModel) settingsView() string {
-	var b strings.Builder
-	b.WriteString(m.crumb())
-	b.WriteString("\n  " + colorDim + "Maintenance" + colorReset + "\n\n")
-	for i, it := range settingsItems {
-		writeRow(&b, i == m.settingsCursor, it.label)
-	}
-	b.WriteString("\n  " + colorDim + settingsItems[m.settingsCursor].desc + colorReset + "\n")
+	b.WriteString("\n  " + colorDim + rows[cursor].desc + colorReset + "\n")
 	if m.confirm != confirmNone {
 		b.WriteString("\n  " + colorYellow + confirmPrompt(m.confirm) + colorReset + "\n")
 		b.WriteString(hintBar(hint{"y", "yes"}, hint{"n/esc", "cancel"}))
 		return b.String()
 	}
 	if m.note != "" {
-		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
-	}
-	if dir, ok := configDir(); ok {
-		b.WriteString("  " + colorDim + "config: " + dir + colorReset + "\n")
+		noteColor := colorGreen
+		if m.noteErr {
+			noteColor = colorRed
+		}
+		b.WriteString("  " + noteColor + m.note + colorReset + "\n")
 	}
 	b.WriteString("\n")
 	b.WriteString(hintBar(
 		hint{gUp + gDown, "move"},
-		hint{gRight + "/" + gEnter, "run"},
+		hint{gRight + "/" + gEnter, "select"},
 		hint{gLeft + "/esc", "back"},
 	))
 	return b.String()
@@ -1275,9 +1317,15 @@ func (m appModel) runningView() string {
 	b.WriteString(m.crumb())
 	b.WriteString("  " + colorDim + fmt.Sprintf("job %d/%d", min(m.jobIdx+1, len(m.jobs)), len(m.jobs)) + colorReset + "\n\n")
 
+	// Chrome around the log is about seven rows: the crumb (a blank + the
+	// trail), the job line plus a blank, an optional status line, a trailing
+	// blank, and the hint bar. Reserve eight for a little slack.
 	tail := runLogTail
 	if m.height > runLogTail+8 {
-		tail = m.height - 8 // fill the screen, leaving room for crumb/job/status/hints
+		tail = m.height - 8 // fill a tall screen, keeping the chrome on-screen
+	}
+	if tail < 3 {
+		tail = 3 // never collapse the log to nothing on a very short terminal
 	}
 	start := 0
 	if len(m.logLines) > tail {
@@ -1301,7 +1349,7 @@ func (m appModel) runningView() string {
 		return b.String() // canceling - no actionable keys left
 	}
 	hints := []hint{}
-	if pauseSupported {
+	if pauseSupported && m.runProc != nil { // pause is a no-op before the child is running
 		label := "pause"
 		if m.paused {
 			label = "resume"
@@ -1324,19 +1372,30 @@ func (m appModel) doneView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
 	b.WriteString("\n")
-	ok := 0
+	ok, partial := 0, 0
 	for _, r := range m.results {
-		if r.err != nil {
-			b.WriteString("  " + colorRed + "[err]" + colorReset + " " + r.label + " - " + r.err.Error() + "\n")
-			continue
-		}
-		ok++
-		b.WriteString("  " + colorGreen + "[ok]" + colorReset + "  " + r.label + "\n")
-		if r.outDir != "" {
-			b.WriteString("        " + colorDim + "decrypted -> " + colorReset + m.truncate(r.outDir) + "\n")
+		switch {
+		case r.err != nil:
+			b.WriteString("  " + colorRed + "[err]" + colorReset + "     " + r.label + " - " + r.err.Error() + "\n")
+		case r.partial:
+			partial++
+			line := "  " + colorYellow + "[partial]" + colorReset + " " + r.label
+			if r.detail != "" {
+				line += " - " + r.detail
+			}
+			b.WriteString(line + "\n")
+		default:
+			ok++
+			b.WriteString("  " + colorGreen + "[ok]" + colorReset + "      " + r.label + "\n")
+			if r.outDir != "" {
+				b.WriteString("        " + colorDim + "decrypted -> " + colorReset + m.truncate(r.outDir) + "\n")
+			}
 		}
 	}
 	fmt.Fprintf(&b, "\n  %d/%d succeeded\n", ok, len(m.results))
+	if partial > 0 {
+		fmt.Fprintf(&b, "  %d partial - output landed but the run did not fully finish\n", partial)
+	}
 	if m.runSkipped > 0 {
 		fmt.Fprintf(&b, "  %d skipped - needed a download first\n", m.runSkipped)
 	}
@@ -1353,7 +1412,7 @@ func (m appModel) doneView() string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(hintBar(hint{"any key", gRight + " menu"}))
+	b.WriteString(hintBar(hint{"any key", "back to menu"}))
 	return b.String()
 }
 
@@ -1388,6 +1447,13 @@ func pluralPacks(n int) string {
 		return "1 pack"
 	}
 	return fmt.Sprintf("%d packs", n)
+}
+
+func pluralAddrs(n int) string {
+	if n == 1 {
+		return "1 address"
+	}
+	return fmt.Sprintf("%d addresses", n)
 }
 
 // --- address field -------------------------------------------------------
@@ -1469,13 +1535,6 @@ func (m *addrListModel) toggle() {
 	}
 }
 
-func (m addrListModel) current() (string, bool) {
-	if m.cursor >= 0 && m.cursor < len(m.items) {
-		return m.items[m.cursor], true
-	}
-	return "", false
-}
-
 // confirmedIndices returns the picked row indices, or the cursor row when nothing
 // is explicitly selected.
 func (m addrListModel) confirmedIndices() []int {
@@ -1555,9 +1614,13 @@ func inspectDownload(d download) decryptState {
 		}
 	}
 	// Already-decrypted output (re-decrypting just overwrites it, so this is
-	// only a hint, not a lock).
-	if out, err := os.ReadDir(decryptOutBase(d.Dir, d.Address)); err == nil && len(out) > 0 {
-		st.decrypted = true
+	// only a hint, not a lock). Gated on a known per-server address: with an
+	// empty address decryptOutBase collapses to the shared decrypted/ parent,
+	// which would falsely light off another server's output.
+	if d.Address != "" {
+		if out, err := os.ReadDir(decryptOutBase(d.Dir, d.Address)); err == nil && len(out) > 0 {
+			st.decrypted = true
+		}
 	}
 	return st
 }
@@ -1613,7 +1676,14 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			d := m.dls[i]
-			return m.startRun([]job{{label: d.Label, address: d.Address}}, actionDownloadDecrypt)
+			// Anchor the re-download to this entry's own dir (not the menu's cwd)
+			// with an explicit argv, so it refreshes THIS entry in place.
+			out := decryptOutBase(d.Dir, d.Address)
+			return m.startRun([]job{{
+				label:  d.Label,
+				argv:   []string{"download", "--decrypt", d.Address, d.Dir},
+				outDir: out,
+			}}, actionDownloadDecrypt)
 		}
 		return m, nil
 	}
@@ -1629,6 +1699,12 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				continue
 			}
 			out := decryptOutBase(d.Dir, d.Address)
+			if d.Address == "" {
+				// No saved server name to file the output under - use the
+				// deterministic <dir>_decrypted sibling instead of the shared
+				// decrypted/ parent, which would mix servers together.
+				out = defaultDecryptOutBase(d.Dir)
+			}
 			jobs = append(jobs, job{
 				label:  d.Label,
 				argv:   []string{"decrypt", "--all", d.KeysFile, d.Dir, out},
@@ -1636,7 +1712,7 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		if len(jobs) == 0 {
-			m.note = "nothing to decrypt - need both packs and a keys file (press g to fetch)"
+			m.note = "nothing to decrypt - the packs are gone, press g to download them again"
 			return m, nil
 		}
 		nm, cmd := m.startRun(jobs, actionDownloadDecrypt)
@@ -1679,7 +1755,7 @@ func (m appModel) decryptView() string {
 		hint{gUp + gDown, "move"},
 		hint{"space", "select"},
 		hint{gRight + "/" + gEnter, "decrypt"},
-		hint{"g", "download"},
+		hint{"g", "download+decrypt"},
 		hint{"d", "forget"},
 		hint{gLeft + "/esc", "back"},
 	))
@@ -1687,36 +1763,29 @@ func (m appModel) decryptView() string {
 }
 
 func decryptBadge(st decryptState) string {
-	keys := colorRed + "no keys" + colorReset
-	if st.hasKeys {
-		keys = colorGreen + "keys" + colorReset
-	}
-	badge := colorDim + pluralPacks(st.packs) + " · " + colorReset + keys
+	// openDecrypt only lists entries that have a keys file, so keys is always
+	// present on this screen.
+	badge := colorDim + pluralPacks(st.packs) + " · " + colorReset + colorGreen + "keys" + colorReset
 	if st.decrypted {
-		badge += colorDim + " · decrypted" + colorReset
+		badge += colorDim + " · " + colorReset + colorGreen + "decrypted" + colorReset
 	}
 	return badge
 }
 
+// decryptHelp explains the highlighted entry. Keys are guaranteed present here
+// (openDecrypt filters to hasKeys), so the only states are: decryptable (with
+// or without an existing decrypted output) and packs-gone.
 func decryptHelp(st decryptState, hasAddr bool) string {
 	switch {
+	case st.decryptable() && st.decrypted:
+		return fmt.Sprintf("Already decrypted - press enter to re-decrypt %s into a decrypted/<server>/ folder beside the packs.", pluralPacks(st.packs))
 	case st.decryptable():
-		return fmt.Sprintf("Decrypt %s - output lands in a sibling _decrypted folder.", pluralPacks(st.packs))
-	case st.packs > 0 && !st.hasKeys:
+		return fmt.Sprintf("Decrypt %s - output lands in a decrypted/<server>/ folder beside the packs.", pluralPacks(st.packs))
+	default: // packs gone, keys still on disk
 		if hasAddr {
-			return "Packs are here but the keys file is missing - press g to fetch keys + packs."
-		}
-		return "Packs are here but the keys file is missing, and no saved address to fetch from."
-	case st.packs == 0 && st.hasKeys:
-		if hasAddr {
-			return "Keys are here but the packs are gone - press g to download them again."
+			return "Keys are here but the packs are gone - press g to download and decrypt them again."
 		}
 		return "Keys are here but the packs are gone, and no saved address to re-download."
-	default:
-		if hasAddr {
-			return "Nothing on disk anymore - press g to re-download, or d to forget this entry."
-		}
-		return "Nothing on disk anymore - press d to forget this entry."
 	}
 }
 
@@ -1829,22 +1898,38 @@ func (m tuiModel) View() string {
 		if m.filter == "" {
 			b.WriteString("   " + colorDim + "No featured servers right now - try again later." + colorReset + "\n")
 		} else {
-			b.WriteString("   (no servers match)\n")
+			b.WriteString("   " + colorDim + "No servers match your filter." + colorReset + "\n")
 		}
 		return b.String()
 	}
+	// Size the name + address columns to the widest entries (over the full set,
+	// not the filtered view, so columns don't jump while typing), mirroring the
+	// CLI table instead of hard-coding widths that long names overflow.
+	nameW, addrW := 4, 7
+	for _, s := range m.servers {
+		if w := len(s.Name); w > nameW {
+			nameW = w
+		}
+		if w := len(addressColumn(s)); w > addrW {
+			addrW = w
+		}
+	}
+	rowFmt := fmt.Sprintf("%%s %%-%ds  %%-%ds", nameW, addrW)
 	for vi, idx := range m.filtered {
 		s := m.servers[idx]
 		box := "[ ]"
 		if m.picked[idx] {
 			box = "[x]"
 		}
-		row := clip(fmt.Sprintf("%s %-18s  %-30s  %s", box, s.Name, addressColumn(s), statusFor(s)), m.width-3)
+		// Clip the box+name+address cell; the status keeps its own state color,
+		// appended after (like listView).
+		cell := clip(fmt.Sprintf(rowFmt, box, s.Name, addressColumn(s)), m.width-3)
 		if vi == m.cursor {
-			b.WriteString(" " + colorCyan + rowCursor + row + colorReset + "\n")
+			b.WriteString(" " + colorCyan + rowCursor + cell + colorReset)
 		} else {
-			b.WriteString("   " + row + "\n")
+			b.WriteString("   " + cell)
 		}
+		b.WriteString("  " + coloredStatusFor(s) + "\n")
 	}
 	return b.String()
 }

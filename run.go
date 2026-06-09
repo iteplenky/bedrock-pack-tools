@@ -63,10 +63,23 @@ type job struct {
 	outDir  string            // where decrypted packs land, for the Done summary
 }
 
+// needsAuth reports whether running this job re-execs an Xbox-authed subcommand
+// (download or keys). Address-based jobs (no explicit argv) always run one of
+// those via action.args; explicit-argv jobs only need auth when they carry a
+// download/keys command (encrypt and decrypt run fully offline).
+func (j job) needsAuth() bool {
+	if j.argv == nil {
+		return true
+	}
+	return len(j.argv) > 0 && (j.argv[0] == "download" || j.argv[0] == "keys")
+}
+
 type jobResult struct {
-	label  string
-	err    error
-	outDir string
+	label   string
+	err     error
+	partial bool   // exit 2: useful output landed but the run did not fully finish
+	detail  string // the child's last line, shown for a partial result
+	outDir  string
 }
 
 // runEvent is one line of child output. Transient lines (carriage-return
@@ -154,7 +167,7 @@ func interpretExit(err error) error {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ee.ExitCode() == 2 {
-			return nil
+			return errPartialResult // useful output landed, but the run wasn't fully done
 		}
 		return fmt.Errorf("exited with code %d", ee.ExitCode())
 	}
@@ -200,8 +213,9 @@ func splitStream(r io.Reader, emit func(runEvent)) {
 // We run the real CLI in a child process rather than calling runDownload
 // in-process so the menu keeps full control: OS-level pause (SIGSTOP) and
 // cancel (kill) work without weaving stop-gates through the networking and
-// decrypt code, and the tested CLI path runs byte-for-byte. The Xbox token
-// is already cached by runTUI's up-front auth, so the child never prompts.
+// decrypt code, and the tested CLI path runs byte-for-byte. The menu mints the
+// Xbox token up front and refuses to launch download/keys jobs while signed out
+// (see startRun), so the captured-pipe child never hits the device-code prompt.
 // selfExe is the path to this binary, re-execed for run jobs and the
 // interactive login handover.
 func selfExe() (string, error) { return os.Executable() }

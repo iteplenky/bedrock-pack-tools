@@ -362,6 +362,15 @@ func statusFor(s franchise.Server) string {
 	return fmt.Sprintf("online %s players", humanCount(s.Players))
 }
 
+// coloredStatusFor wraps statusFor in the same state color the CLI tag column
+// uses (online green / offline red / live-event yellow / experience cyan), so
+// the interactive featured list reads at a glance like the recent and decrypt
+// screens instead of being monochrome.
+func coloredStatusFor(s franchise.Server) string {
+	_, color := tagFor(s)
+	return color + statusFor(s) + colorReset
+}
+
 // humanCount: 14104 -> "14k", 1_543_000 -> "1.5M", <1000 unchanged.
 func humanCount(n int) string {
 	switch {

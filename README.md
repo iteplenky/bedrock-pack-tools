@@ -17,6 +17,8 @@ into plain editable folders or re-encrypt your own.
 - **`decrypt`** - turn an encrypted `.mcpack` into a plain, editable directory
 - **`encrypt`** - package a plain resource pack into a deployable `.mcpack` + `.mcpack.key`
 - **`featured`** - browse and download from Minecraft's Featured Servers / Live Events catalog
+- **`login`** - sign in via Xbox Live (device code flow) and cache the token
+- **`logout`** - remove the cached Xbox + MCToken auth files
 - **`version`** - print the build version
 - **interactive menu** - run with no command for a sectioned menu: browse the Featured Servers (filter as you type, multi-select with space) or enter any `host:port`, pick an action (download, download + decrypt, or keys only), and watch live progress - pause with `p`, cancel with `esc`
 
@@ -195,6 +197,25 @@ Each row has five columns - tag, index, name, address, status:
 - `[EXP]` - reached via `experienceId`, not a fixed host; resolved on download via `POST /api/v2.0/join/experience`
 - `[EVT]` - Mojang Gathering / live event; resolved on download via `/api/v1.0/access` + `/api/v1.0/venue/{gatheringId}`
 
+### `login` - sign in via Xbox Live
+
+```bash
+bedrock-pack-tools login
+```
+
+Runs the Xbox Live device-code flow if no token is cached, then caches it. Use
+it to pre-authenticate before running `keys`, `download`, or `featured` (or the
+interactive menu) instead of being prompted mid-action.
+
+### `logout` - clear the cached tokens
+
+```bash
+bedrock-pack-tools logout
+```
+
+Removes the cached Xbox token and MCToken so the next authenticated command
+re-prompts for sign-in. The `.device_id` cohort is left in place.
+
 ### `version` - print the build version
 
 ```bash
@@ -325,7 +346,7 @@ scratch.
 | Variable           | Effect                                                                          |
 | ------------------ | ------------------------------------------------------------------------------- |
 | `NO_COLOR`         | Disable all ANSI colors and escape codes ([no-color.org](https://no-color.org/)) |
-| `BPT_DIAL_TIMEOUT` | Override the `keys` / `download` dial timeout, as a Go duration (`5m`, `90s`). Useful for slow servers or long pack-info waits. Gates only the initial server dial, not the per-pack CDN fetch. |
+| `BPT_DIAL_TIMEOUT` | Override the `keys` / `download` dial timeout, as a Go duration (`5m`, `90s`). Useful for slow servers or long pack-info waits. Bounds the whole keys / download run - the initial dial and any CDN fetches share this deadline. |
 
 ## Notes
 
