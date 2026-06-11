@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/sandertv/go-raknet"
 	"golang.org/x/oauth2"
 )
@@ -34,7 +35,7 @@ func runFeatured(args []string) error {
 		return featuredList()
 	case "download":
 		if len(args) < 2 {
-			return fmt.Errorf("featured download requires an index - run 'bedrock-pack-tools featured' to see the list")
+			return errors.New(lang.T("featured.download.needindex"))
 		}
 		return featuredDownload(args[1:])
 	case "-h", "--help", "help":
@@ -51,25 +52,13 @@ func runFeatured(args []string) error {
 }
 
 func printFeaturedUsage() {
-	fmt.Println(`Usage:
-  bedrock-pack-tools featured
-  bedrock-pack-tools featured download <index> [output-dir]
-
-List the Featured Servers and Live Events surfaced by Minecraft's
-client-discovery service, then optionally download a chosen entry.
-
-Requires Xbox Live authentication (token cached on first use).
-
-Examples:
-  bedrock-pack-tools featured
-  bedrock-pack-tools featured download 1
-  bedrock-pack-tools featured download 1 ./packs/`)
+	fmt.Println(lang.T("featured.usage"))
 }
 
 func featuredList() error {
-	fmt.Println("\n  ┌─ Featured Servers ────────────────────────")
-	fmt.Println("  │ Source: Minecraft gatherings API")
-	fmt.Println("  └──────────────────────────────────────────")
+	fmt.Println(lang.T("featured.list.header.title"))
+	fmt.Println(lang.T("featured.list.header.source"))
+	fmt.Println(lang.T("featured.list.header.rule"))
 
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
@@ -82,23 +71,23 @@ func featuredList() error {
 	}
 
 	fmt.Println()
-	sp := startSpinner("Fetching catalog")
+	sp := startSpinner(lang.T("featured.list.spinner.fetch"))
 	servers, _, err := fetchFeaturedListWithClient(sigCtx, tokenSource)
 	sp.stop("")
 	if err != nil {
 		return err
 	}
 	if len(servers) == 0 {
-		fmt.Println("  No featured servers returned by the API.")
+		fmt.Println(lang.T("featured.list.empty"))
 		return nil
 	}
 
-	sp = startSpinner(fmt.Sprintf("Pinging %d servers", len(servers)))
+	sp = startSpinner(lang.Tf("featured.list.spinner.ping", len(servers)))
 	pingAll(sigCtx, servers)
 	sp.stop("")
 
 	printFeaturedTable(servers)
-	fmt.Println("\n  To download:  bedrock-pack-tools featured download <index> [output-dir]")
+	fmt.Println(lang.T("featured.list.todownload"))
 	fmt.Println()
 	return nil
 }
@@ -110,7 +99,7 @@ func featuredDownload(args []string) error {
 	}
 	idx, err := strconv.Atoi(args[0])
 	if err != nil || idx < 1 {
-		return fmt.Errorf("invalid index %q: must be a positive integer", args[0])
+		return fmt.Errorf(lang.T("featured.download.badindex"), args[0])
 	}
 
 	sigCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -122,14 +111,14 @@ func featuredDownload(args []string) error {
 	}
 
 	fmt.Println()
-	sp := startSpinner("Fetching catalog")
+	sp := startSpinner(lang.T("featured.download.spinner.fetch"))
 	servers, client, err := fetchFeaturedListWithClient(sigCtx, tokenSource)
 	sp.stop("")
 	if err != nil {
 		return err
 	}
 	if idx > len(servers) {
-		return fmt.Errorf("index %d out of range (have %d featured servers)", idx, len(servers))
+		return fmt.Errorf(lang.T("featured.download.outofrange"), idx, len(servers))
 	}
 	s := servers[idx-1]
 
@@ -141,7 +130,7 @@ func featuredDownload(args []string) error {
 		return err
 	}
 
-	fmt.Printf("\n  [->] %s  ->  %s\n", s.Name, address)
+	fmt.Printf(lang.T("featured.download.resolved"), s.Name, address)
 
 	return runDownload(append([]string{address}, args[1:]...))
 }
@@ -159,9 +148,9 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 		})
 		if err != nil {
 			if errors.Is(err, franchise.ErrForbidden) {
-				return "", fmt.Errorf("%q is not joinable by this account (Mojang returned forbidden)", s.Name)
+				return "", fmt.Errorf(lang.T("featured.resolve.gathering.forbidden"), s.Name)
 			}
-			return "", fmt.Errorf("resolve gathering %q: %w", s.Name, err)
+			return "", fmt.Errorf(lang.T("featured.resolve.gathering.fail"), s.Name, err)
 		}
 		return fmt.Sprintf("%s:%d", host, port), nil
 	case franchise.KindPartnerExperience:
@@ -171,15 +160,15 @@ func resolveAddress(ctx context.Context, client *franchise.Client, s franchise.S
 		if err != nil {
 			switch {
 			case errors.Is(err, franchise.ErrExperienceOffline):
-				return "", fmt.Errorf("%q has no active venue right now (the slot is listed but not joinable from outside the official client)", s.Name)
+				return "", fmt.Errorf(lang.T("featured.resolve.experience.offline"), s.Name)
 			case errors.Is(err, franchise.ErrForbidden):
-				return "", fmt.Errorf("%q is not joinable by this account (Mojang returned forbidden - it may be region-locked or only joinable from the official client)", s.Name)
+				return "", fmt.Errorf(lang.T("featured.resolve.experience.forbidden"), s.Name)
 			}
-			return "", fmt.Errorf("resolve experience %q: %w", s.Name, err)
+			return "", fmt.Errorf(lang.T("featured.resolve.experience.fail"), s.Name, err)
 		}
 		return fmt.Sprintf("%s:%d", host, port), nil
 	}
-	return "", fmt.Errorf("unknown featured kind for %q", s.Name)
+	return "", fmt.Errorf(lang.T("featured.resolve.unknownkind"), s.Name)
 }
 
 // resolveWithRetry re-mints the MCToken once on ErrAuthRejected (401),
@@ -227,7 +216,7 @@ func fetchFeaturedListWithClient(parent context.Context, tokenSource oauth2.Toke
 			invalidateFranchise(client)
 			continue
 		} else {
-			fmt.Fprintf(os.Stderr, "  Warning: could not fetch live events: %v\n", gErr)
+			fmt.Fprintf(os.Stderr, lang.T("featured.liveevents.warn"), gErr)
 		}
 		persistFranchiseToken(client)
 		return append(gatherings, partners...), client, nil
@@ -320,11 +309,11 @@ func addressColumn(s franchise.Server) string {
 	}
 	switch s.Kind {
 	case franchise.KindGathering:
-		return "(live event)"
+		return lang.T("featured.addr.liveevent")
 	case franchise.KindPartnerExperience:
-		return "(experience-join)"
+		return lang.T("featured.addr.experience")
 	}
-	return "(no address)"
+	return lang.T("featured.addr.none")
 }
 
 func tagFor(s franchise.Server) (tag, color string) {
@@ -346,20 +335,20 @@ func tagFor(s franchise.Server) (tag, color string) {
 func statusFor(s franchise.Server) string {
 	if !s.HasAddress() {
 		if s.Kind == franchise.KindGathering || s.Kind == franchise.KindPartnerExperience {
-			return "resolve on download"
+			return lang.T("featured.status.resolve")
 		}
-		return "offline"
+		return lang.T("featured.status.offline")
 	}
 	if !s.Online {
-		return "offline"
+		return lang.T("featured.status.offline")
 	}
 	if s.Players <= 0 {
-		return "online"
+		return lang.T("featured.status.online")
 	}
 	if s.Players == 1 {
-		return "online 1 player"
+		return lang.T("featured.status.online.one")
 	}
-	return fmt.Sprintf("online %s players", humanCount(s.Players))
+	return lang.Tf("featured.status.online.many", humanCount(s.Players))
 }
 
 // coloredStatusFor wraps statusFor in the same state color the CLI tag column

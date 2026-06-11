@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
 // action is the operation the menu runs against each chosen target. The
@@ -26,15 +27,18 @@ const (
 )
 
 type actionChoice struct {
-	label string
-	desc  string
-	value action
+	labelKey string
+	descKey  string
+	value    action
 }
 
+func (c actionChoice) label() string { return lang.T(c.labelKey) }
+func (c actionChoice) desc() string  { return lang.T(c.descKey) }
+
 var actionChoices = []actionChoice{
-	{"Download packs", "Save the keys file and the encrypted packs to this folder.", actionDownload},
-	{"Download + decrypt", "Download, then turn every pack into a ready-to-edit folder.", actionDownloadDecrypt},
-	{"Keys only", "Just dump the AES content keys - no packs downloaded.", actionKeys},
+	{"tui.action.download.label", "tui.action.download.desc", actionDownload},
+	{"tui.action.downloadDecrypt.label", "tui.action.downloadDecrypt.desc", actionDownloadDecrypt},
+	{"tui.action.keys.label", "tui.action.keys.desc", actionKeys},
 }
 
 // args turns an action plus a resolved address into the subcommand we

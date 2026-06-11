@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/iteplenky/gophertunnel/minecraft"
 	"github.com/iteplenky/gophertunnel/minecraft/protocol/packet"
 )
@@ -32,7 +33,7 @@ func (p *keysTracker) onPackStart(id uuid.UUID, version string, current, total i
 	if p.connectSpinner != nil {
 		p.connectSpinner.stop("")
 	}
-	fmt.Printf("%s  Pack %d/%d: %s v%s (skipped)", clearLine, current+1, total, id, version)
+	fmt.Printf(lang.T("keys.pack.skipped"), clearLine, current+1, total, id, version)
 	return false
 }
 
@@ -45,7 +46,7 @@ func (p *keysTracker) onPacket(header packet.Header, payload []byte, src, dst ne
 func (p *keysTracker) onResourcePacksInfo(payload []byte) {
 	packs, err := parseResourcePacks(payload)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("keys.warn"), err)
 		// Cancel anyway - ResourcePacksInfo arrives once per connection.
 		if p.cancel != nil {
 			p.cancel()
@@ -66,14 +67,7 @@ func (p *keysTracker) onResourcePacksInfo(payload []byte) {
 
 func runKeys(args []string) error {
 	if len(args) < 1 {
-		fmt.Println(`Usage: bedrock-pack-tools keys <server:port> [output.json]
-
-Connect to a Minecraft Bedrock server and extract resource pack encryption
-keys. Authenticates via Xbox Live device code flow (token cached locally).
-
-Examples:
-  bedrock-pack-tools keys <server:port>
-  bedrock-pack-tools keys <server:port> server_keys.json`)
+		fmt.Println(lang.T("keys.usage"))
 		return errUsage
 	}
 
@@ -83,10 +77,10 @@ Examples:
 		outFile = args[1]
 	}
 
-	fmt.Println("\n  ┌─ Pack Key Dumper ─────────────────────────")
-	fmt.Println("  │ Server: " + server)
-	fmt.Println("  │ Output: " + outFile)
-	fmt.Println("  └──────────────────────────────────────────")
+	fmt.Println(lang.T("keys.header.title"))
+	fmt.Println(lang.T("keys.header.server") + server)
+	fmt.Println(lang.T("keys.header.output") + outFile)
+	fmt.Println(lang.T("keys.header.rule"))
 
 	tokenSource, err := getTokenSource()
 	if err != nil {
@@ -110,7 +104,7 @@ Examples:
 	}
 
 	fmt.Println()
-	tracker.connectSpinner = startSpinner("Connecting to " + server)
+	tracker.connectSpinner = startSpinner(lang.T("keys.spinner.connecting") + server)
 	start := time.Now()
 
 	conn, err := dialer.DialContext(ctx, "raknet", server)
@@ -126,24 +120,24 @@ Examples:
 
 	if err != nil {
 		if keyCount > 0 {
-			fmt.Printf("%s  Keys captured in %.1fs (%d packs on server)\n\n", clearLine, elapsed.Seconds(), totalPacks)
+			fmt.Printf(lang.T("keys.partial.captured"), clearLine, elapsed.Seconds(), totalPacks)
 			printKeys(keys)
-			fmt.Printf("\n  Saved %d keys -> %s\n\n", keyCount, outFile)
+			fmt.Printf(lang.T("keys.partial.saved"), keyCount, outFile)
 			return errPartialResult
 		}
-		return fmt.Errorf("connection to %s failed: %w", server, err)
+		return fmt.Errorf(lang.T("keys.connect.failed"), server, err)
 	}
 	defer conn.Close()
 
-	fmt.Printf("%s  Connected! (%.1fs)\n\n", clearLine, elapsed.Seconds())
+	fmt.Printf(lang.T("keys.connected"), clearLine, elapsed.Seconds())
 
 	printKeys(keys)
-	fmt.Printf("\n  Total: %d packs (%d encrypted)\n", totalPacks, keyCount)
+	fmt.Printf(lang.T("keys.total"), totalPacks, keyCount)
 
 	if keyCount > 0 {
-		fmt.Printf("  Saved %d keys -> %s\n\n", keyCount, outFile)
+		fmt.Printf(lang.T("keys.saved"), keyCount, outFile)
 	} else {
-		fmt.Println("\n  No encryption keys found - nothing written to " + outFile + ".")
+		fmt.Println(lang.T("keys.none") + outFile + lang.T("keys.none.tail"))
 	}
 	return nil
 }
@@ -151,7 +145,7 @@ Examples:
 func printKeys(keys map[string]keyEntry) {
 	for _, uid := range slices.Sorted(maps.Keys(keys)) {
 		info := keys[uid]
-		fmt.Printf("  %s[ENC]%s %s v%s \"%s\"\n", colorYellow, colorReset, uid, info.Version, info.Name)
-		fmt.Printf("        KEY: %s%s%s\n", colorGreen, info.Key, colorReset)
+		fmt.Printf(lang.T("keys.entry.head"), colorYellow, colorReset, uid, info.Version, info.Name)
+		fmt.Printf(lang.T("keys.entry.key"), colorGreen, info.Key, colorReset)
 	}
 }

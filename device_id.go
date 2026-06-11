@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
 const deviceIDFileName = ".device_id"
@@ -65,7 +66,7 @@ func deviceIDPath() (string, error) {
 func loadOrCreateDeviceID() string {
 	path, err := deviceIDPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: device.ID not persisted (%v); cohort assignment will be unstable\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.device.notPersisted"), err)
 		return uuid.NewString()
 	}
 	if data, err := os.ReadFile(path); err == nil {
@@ -79,7 +80,7 @@ func loadOrCreateDeviceID() string {
 
 	id := uuid.NewString()
 	if err := writeDeviceIDAtomic(path, id); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not persist device.ID: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.device.persistFailed"), err)
 	}
 	return id
 }

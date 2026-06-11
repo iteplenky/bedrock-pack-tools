@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/cfb8"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
 func runEncrypt(args []string) error {
@@ -24,24 +25,7 @@ func runEncrypt(args []string) error {
 	}
 
 	if len(args) < 1 {
-		fmt.Println(`Usage:
-  bedrock-pack-tools encrypt [--key-out PATH] <pack-dir> [key] [output.mcpack]
-
-Encrypt a plain resource pack directory using AES-256-CFB8.
-Produces a ready-to-use .mcpack file and a .mcpack.key file.
-
-If the key is omitted, a random 32-character key is generated.
-If the output is omitted, it defaults to <pack-name>.mcpack in the current directory.
-
-Flags:
-  --key-out PATH, -k PATH   Write the master key to PATH instead of
-                            the default <output.mcpack>.key location.
-
-Examples:
-  bedrock-pack-tools encrypt ./MyPack_v1.0.0/
-  bedrock-pack-tools encrypt ./MyPack_v1.0.0/ MY_32_CHARACTER_KEY_HERE_1234567
-  bedrock-pack-tools encrypt ./MyPack_v1.0.0/ MY_32_CHARACTER_KEY_HERE_1234567 ./out/MyPack.mcpack
-  bedrock-pack-tools encrypt --key-out ~/keys/pack.key ./MyPack_v1.0.0/`)
+		fmt.Println(lang.T("packs.encrypt.usage"))
 		return errUsage
 	}
 
@@ -76,10 +60,10 @@ Examples:
 	}
 
 	fmt.Println()
-	fmt.Println("  Pack:    " + packDir)
-	fmt.Println("  Key:     " + masterKey)
-	fmt.Println("  Output:  " + mcpackPath)
-	fmt.Println("  Keyfile: " + keyPath)
+	fmt.Println(lang.Tf("packs.encrypt.packLabel", packDir))
+	fmt.Println(lang.Tf("packs.encrypt.keyLabel", masterKey))
+	fmt.Println(lang.Tf("packs.encrypt.outputLabel", mcpackPath))
+	fmt.Println(lang.Tf("packs.encrypt.keyfileLabel", keyPath))
 	fmt.Println()
 
 	tmpDir, err := os.MkdirTemp("", "bedrock-encrypt-*")
@@ -106,10 +90,10 @@ Examples:
 		return fmt.Errorf("write key file: %w", err)
 	}
 
-	fmt.Printf("  Done! %d encrypted, %d copied, %d errors\n",
-		stats.encrypted, stats.copied, stats.errors)
-	fmt.Printf("  %s%s%s (%s)\n", colorGreen, mcpackPath, colorReset, humanSize(fileSize(mcpackPath)))
-	fmt.Printf("  %s%s%s\n", colorGreen, keyPath, colorReset)
+	fmt.Print(lang.Tf("packs.encrypt.done",
+		stats.encrypted, stats.copied, stats.errors))
+	fmt.Print(lang.Tf("packs.encrypt.outFile", colorGreen, mcpackPath, colorReset, humanSize(fileSize(mcpackPath))))
+	fmt.Print(lang.Tf("packs.encrypt.keyFile", colorGreen, keyPath, colorReset))
 	return nil
 }
 
@@ -182,7 +166,7 @@ func encryptPack(packDir, masterKey, outDir string) (encryptStats, error) {
 	)
 	for _, r := range results {
 		if r.err != nil {
-			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, r.entry.Path, r.err)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.encrypt.fileErr", colorRed, colorReset, r.entry.Path, r.err))
 			stats.errors++
 			continue
 		}

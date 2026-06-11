@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"golang.org/x/oauth2"
 )
 
@@ -73,30 +74,35 @@ const (
 
 // section is one row of the main menu, with a help line shown when it's
 // highlighted. group lays out related rows together with a blank-line break.
+// labelKey/descKey are catalog keys resolved at render time (not at package
+// init, where the catalog isn't registered yet).
 type section struct {
-	label  string
-	desc   string
-	target screen
-	group  int
+	labelKey string
+	descKey  string
+	target   screen
+	group    int
 }
+
+func (s section) label() string { return lang.T(s.labelKey) }
+func (s section) desc() string  { return lang.T(s.descKey) }
 
 // Ordered by workflow and grouped with blank-line breaks: pick a server to
 // pull packs from, then your own saved/recent servers, then work with what
 // you've already downloaded.
 var sections = []section{
-	{"Featured servers", "Browse Mojang's live catalog and pick one or more.", screenFeatured, 0},
-	{"Enter a server address", "Type any host:port, e.g. play.example.net:19132.", screenAddress, 0},
-	{"Saved servers", "Addresses you saved for quick re-use.", screenSaved, 1},
-	{"Recent addresses", "Addresses you entered recently, with their last result.", screenRecent, 1},
-	{"Decrypt packs", "Decrypt packs you've downloaded - or fetch what's missing.", screenDecrypt, 2},
-	{"Encrypt a pack", "Package a local pack folder into a .mcpack + .mcpack.key.", screenEncrypt, 2},
-	{"Settings", "Sign in or out, clear saved data, or reset the featured cohort.", screenSettings, 3},
+	{"tui.section.featured.label", "tui.section.featured.desc", screenFeatured, 0},
+	{"tui.section.address.label", "tui.section.address.desc", screenAddress, 0},
+	{"tui.section.saved.label", "tui.section.saved.desc", screenSaved, 1},
+	{"tui.section.recent.label", "tui.section.recent.desc", screenRecent, 1},
+	{"tui.section.decrypt.label", "tui.section.decrypt.desc", screenDecrypt, 2},
+	{"tui.section.encrypt.label", "tui.section.encrypt.desc", screenEncrypt, 2},
+	{"tui.section.settings.label", "tui.section.settings.desc", screenSettings, 3},
 }
 
 func sectionTitle(target screen) string {
 	for _, s := range sections {
 		if s.target == target {
-			return s.label
+			return s.label()
 		}
 	}
 	return ""
@@ -117,44 +123,70 @@ const (
 func confirmPrompt(k confirmKind) string {
 	switch k {
 	case confirmLogout:
-		return "Forget the cached sign-in?"
+		return lang.T("tui.confirm.logout")
 	case confirmClearAddrs:
-		return "Clear saved and recent addresses?"
+		return lang.T("tui.confirm.clearAddrs")
 	case confirmClearDownloads:
-		return "Forget download history? (packs on disk are kept)"
+		return lang.T("tui.confirm.clearDownloads")
 	case confirmResetCohort:
-		return "Reset the featured cohort? Reopen Featured to see the new list."
+		return lang.T("tui.confirm.resetCohort")
 	}
 	return ""
 }
 
 // settingsItem is a row on the Settings screen. Maintenance rows arm a y/n
 // confirm; the sign-in row (signIn=true) hands off to the device flow with no
-// confirm.
+// confirm; the language row (langToggle=true) flips EN/RU in place. group lays
+// related rows out together with a blank-line break. labelKey/descKey resolve
+// through the catalog at render time.
 type settingsItem struct {
-	label   string
-	desc    string
-	confirm confirmKind
-	signIn  bool
+	labelKey   string
+	descKey    string
+	confirm    confirmKind
+	signIn     bool
+	langToggle bool
+	group      int
 }
 
-// maintenanceItems are the destructive housekeeping rows, shown beneath the
-// sign-in/out row regardless of auth state.
-var maintenanceItems = []settingsItem{
-	{"Clear saved and recent", "Forget your saved servers and recent addresses.", confirmClearAddrs, false},
-	{"Clear download history", "Forget where past downloads landed (packs on disk are kept).", confirmClearDownloads, false},
-	{"Reset featured cohort", "Roll a new device id - reopen Featured for a fresh list.", confirmResetCohort, false},
-}
-
-// settingsRows is the live Settings list: a state-aware sign-in/out row on top
-// (you're always signed in when the menu opens, so it reads "Sign out" until
-// you sign out in-session), then the maintenance rows.
-func settingsRows(signedIn bool) []settingsItem {
-	auth := settingsItem{"Sign in", "Run Xbox device sign-in - a URL and code will appear.", confirmNone, true}
-	if signedIn {
-		auth = settingsItem{"Sign out", "Forget the cached Xbox token and franchise session.", confirmLogout, false}
+func (it settingsItem) label() string {
+	if it.langToggle {
+		return lang.Tf("tui.settings.language.label", langDisplayName())
 	}
-	return append([]settingsItem{auth}, maintenanceItems...)
+	return lang.T(it.labelKey)
+}
+func (it settingsItem) desc() string { return lang.T(it.descKey) }
+
+// langDisplayName is the active language's own name, always shown in its own
+// script (never translated), so the toggle reads "Language: English" /
+// "Язык: Русский".
+func langDisplayName() string {
+	if lang.Current() == lang.Russian {
+		return "Русский"
+	}
+	return "English"
+}
+
+// maintenanceItems are the destructive housekeeping rows, shown between the
+// language toggle and the sign-in/out row regardless of auth state.
+var maintenanceItems = []settingsItem{
+	{"tui.settings.clearAddrs.label", "tui.settings.clearAddrs.desc", confirmClearAddrs, false, false, 0},
+	{"tui.settings.clearDownloads.label", "tui.settings.clearDownloads.desc", confirmClearDownloads, false, false, 0},
+	{"tui.settings.resetCohort.label", "tui.settings.resetCohort.desc", confirmResetCohort, false, false, 0},
+}
+
+// settingsRows is the live Settings list: the language toggle and maintenance
+// rows in the first group, then a state-aware sign-in/out row last in its own
+// group (you're always signed in when the menu opens, so it reads "Sign out"
+// until you sign out in-session).
+func settingsRows(signedIn bool) []settingsItem {
+	language := settingsItem{labelKey: "tui.settings.language.label", descKey: "tui.settings.language.desc", confirm: confirmNone, langToggle: true, group: 0}
+	auth := settingsItem{labelKey: "tui.settings.signIn.label", descKey: "tui.settings.signIn.desc", confirm: confirmNone, signIn: true, group: 1}
+	if signedIn {
+		auth = settingsItem{labelKey: "tui.settings.signOut.label", descKey: "tui.settings.signOut.desc", confirm: confirmLogout, group: 1}
+	}
+	rows := []settingsItem{language}
+	rows = append(rows, maintenanceItems...)
+	return append(rows, auth)
 }
 
 // runLogTail is how many committed output lines the running screen shows.
@@ -328,9 +360,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if gained > 0 {
-				m.note = "resolved " + pluralServers(gained)
+				m.note = lang.Tf("tui.note.resolved", pluralServers(gained))
 			} else {
-				m.note, m.noteErr = "no addresses resolved right now", true
+				m.note, m.noteErr = lang.T("tui.note.noResolved"), true
 			}
 			m.fServers = msg.servers
 			m.featured.servers = msg.servers // same indices, so cursor/picks hold
@@ -342,9 +374,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ts, err := getTokenSource(); err == nil {
 				m.ts = ts // refresh the in-process source after a fresh sign-in
 			}
-			m.note = "signed in"
+			m.note = lang.T("tui.note.signedIn")
 		} else {
-			m.note = "sign-in did not complete"
+			m.note = lang.T("tui.note.signInIncomplete")
 		}
 		return m, nil
 	case resolvedMsg:
@@ -359,7 +391,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusLn = msg.text
 		} else if line, ok := cleanLogLine(msg.text); ok {
 			m.logLines = append(m.logLines, line)
-			if m.statusLn == "Starting..." {
+			if m.statusLn == lang.T("tui.status.starting") {
 				m.statusLn = "" // the first committed line is the live signal now
 			}
 		}
@@ -446,9 +478,9 @@ func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch sections[m.menuCursor].target {
 		case screenFeatured:
 			if m.ts == nil { // signed out: nothing to authenticate the catalog fetch
-				m.settingsCursor = 0 // lands on the Sign in row
+				m.settingsCursor = len(settingsRows(false)) - 1 // lands on the Sign in row (now last)
 				m.confirm = confirmNone
-				m.note = "sign in first to browse featured servers"
+				m.note = lang.T("tui.note.signInFirstFeatured")
 				m.screen = screenSettings
 				return m, nil
 			}
@@ -474,7 +506,7 @@ func (m appModel) handleMenuKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addr = textField{}
 			m.screen = screenAddress
 		case screenSettings:
-			m.settingsCursor = 0
+			m.settingsCursor = len(settingsRows(false)) - 1 // lands on the Sign in row (now last)
 			m.confirm = confirmNone
 			m.screen = screenSettings
 		}
@@ -542,7 +574,7 @@ func (m appModel) handleListKey(key tea.KeyMsg, isRecent bool) (tea.Model, tea.C
 			} else {
 				m.list = newAddrList(m.store.Saved)
 			}
-			m.note = "forgot " + pluralAddrs(len(addrs))
+			m.note = lang.Tf("tui.note.forgot", pluralAddrs(len(addrs)))
 		}
 		return m, nil
 	case "s":
@@ -552,7 +584,7 @@ func (m appModel) handleListKey(key tea.KeyMsg, isRecent bool) (tea.Model, tea.C
 				m.store.addSaved(addr)
 			}
 			if len(addrs) > 0 {
-				m.note = "saved " + pluralAddrs(len(addrs))
+				m.note = lang.Tf("tui.note.saved", pluralAddrs(len(addrs)))
 			}
 		}
 		return m, nil
@@ -603,7 +635,7 @@ func (m appModel) handleAddressKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addr.err = err.Error()
 		} else {
 			m.store.addSaved(addr)
-			m.note = "saved " + addr
+			m.note = lang.Tf("tui.note.savedAddr", addr)
 		}
 	case "backspace":
 		m.addr.deleteBack()
@@ -652,10 +684,20 @@ func (m appModel) handleSettingsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenMenu
 	case forward(key):
 		it := rows[min(m.settingsCursor, len(rows)-1)]
-		if it.signIn {
+		switch {
+		case it.langToggle:
+			next := lang.English
+			if lang.Current() == lang.English {
+				next = lang.Russian
+			}
+			lang.SetActive(next)
+			m.store.setLanguage(next.String())
+			m.note = lang.Tf("tui.note.languageChanged", langDisplayName())
+		case it.signIn:
 			return m, loginCmd() // hands the terminal to the device-code flow
+		default:
+			m.confirm = it.confirm
 		}
-		m.confirm = it.confirm
 	}
 	return m, nil
 }
@@ -666,7 +708,7 @@ func (m appModel) runConfirmed() (tea.Model, tea.Cmd) {
 	case confirmLogout:
 		wasSignedIn := loadToken() != nil
 		if err := clearAuthCaches(); err != nil {
-			m.note, m.noteErr = "logout failed: "+err.Error(), true
+			m.note, m.noteErr = lang.Tf("tui.note.logoutFailed", err.Error()), true
 		} else {
 			// Drop the in-memory session too, not just the disk caches: the
 			// refresh-token source and franchise client would otherwise keep
@@ -676,27 +718,27 @@ func (m appModel) runConfirmed() (tea.Model, tea.Cmd) {
 			m.fServers = nil
 			m.featured = tuiModel{}
 			if wasSignedIn {
-				m.note = "signed out"
+				m.note = lang.T("tui.note.signedOut")
 			} else {
-				m.note = "already signed out"
+				m.note = lang.T("tui.note.alreadySignedOut")
 			}
 		}
 	case confirmClearAddrs:
 		m.store.clearAddresses()
-		m.note = "cleared saved and recent"
+		m.note = lang.T("tui.note.clearedAddrs")
 	case confirmClearDownloads:
 		m.store.clearDownloads()
-		m.note = "cleared download history"
+		m.note = lang.T("tui.note.clearedDownloads")
 	case confirmResetCohort:
 		if err := resetDeviceID(); err != nil {
-			m.note, m.noteErr = "reset failed: "+err.Error(), true
+			m.note, m.noteErr = lang.Tf("tui.note.resetFailed", err.Error()), true
 		} else {
 			// Drop the cached catalog + client so the next Featured open builds a
 			// fresh client (new device id, no seeded token) and shows the new
 			// cohort - otherwise the reset wouldn't take effect until next launch.
 			m.fServers = nil
 			m.fClient = nil
-			m.note = "cohort reset - reopen Featured to refresh"
+			m.note = lang.T("tui.note.cohortReset")
 		}
 	}
 	m.confirm = confirmNone
@@ -741,13 +783,13 @@ func (m appModel) handleEncryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func validatePackDir(s string) (string, error) {
 	s = strings.TrimRight(strings.TrimSpace(s), "/\\")
 	if s == "" {
-		return "", fmt.Errorf("enter a path to a pack folder")
+		return "", fmt.Errorf("%s", lang.T("tui.validate.enterPath"))
 	}
 	if fi, err := os.Stat(s); err != nil || !fi.IsDir() {
-		return "", fmt.Errorf("not a folder - point at a resource-pack directory")
+		return "", fmt.Errorf("%s", lang.T("tui.validate.notFolder"))
 	}
 	if _, err := os.Stat(filepath.Join(s, manifestJSON)); err != nil {
-		return "", fmt.Errorf("no manifest.json there - point at a resource-pack directory")
+		return "", fmt.Errorf("%s", lang.T("tui.validate.noManifest"))
 	}
 	return s, nil
 }
@@ -760,9 +802,9 @@ func (m appModel) startRun(jobs []job, act action) (appModel, tea.Cmd) {
 	if m.ts == nil {
 		for _, j := range jobs {
 			if j.needsAuth() {
-				m.settingsCursor = 0 // lands on the Sign in row
+				m.settingsCursor = len(settingsRows(false)) - 1 // lands on the Sign in row (now last)
 				m.confirm = confirmNone
-				m.note = "sign in first - Settings > Sign in"
+				m.note = lang.T("tui.note.signInFirstRun")
 				m.screen = screenSettings
 				return m, nil
 			}
@@ -832,17 +874,17 @@ func (m appModel) beginJob() (appModel, tea.Cmd) {
 	j := m.jobs[m.jobIdx]
 	m.logLines = append(m.logLines, "-- "+j.label+" --")
 	if j.argv != nil {
-		m.statusLn = "Starting..."
+		m.statusLn = lang.T("tui.status.starting")
 		return m, runArgvCmd(j.argv)
 	}
 	if j.address == "" && j.server != nil {
-		m.statusLn = "Resolving address..."
+		m.statusLn = lang.T("tui.status.resolving")
 		ctx, cancel := context.WithTimeout(context.Background(), featuredAPITimeout)
 		m.resolveCancel = cancel
 		return m, resolveJobCmd(ctx, m.fClient, *j.server)
 	}
 	m.markDecryptOut(j.address)
-	m.statusLn = "Starting..."
+	m.statusLn = lang.T("tui.status.starting")
 	return m, runArgvCmd(m.act.args(j.address))
 }
 
@@ -870,14 +912,14 @@ func (m appModel) onResolved(msg resolvedMsg) (tea.Model, tea.Cmd) {
 		return m.beginJob() // routes to the summary
 	}
 	if msg.err != nil {
-		m.logLines = append(m.logLines, "[err] "+msg.err.Error())
+		m.logLines = append(m.logLines, lang.Tf("tui.log.err", msg.err.Error()))
 		m.results = append(m.results, jobResult{label: m.jobs[m.jobIdx].label, err: msg.err})
 		m.jobIdx++
 		return m.beginJob()
 	}
 	m.jobs[m.jobIdx].address = msg.address
 	m.markDecryptOut(msg.address)
-	m.statusLn = "Starting..."
+	m.statusLn = lang.T("tui.status.starting")
 	return m, runArgvCmd(m.act.args(msg.address))
 }
 
@@ -932,7 +974,7 @@ func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 		// Keep the decrypt-section entry, but don't claim a clean success.
 		m.results = append(m.results, jobResult{label: j.label, partial: true, detail: msg.detail, outDir: j.outDir})
 		if msg.detail != "" {
-			m.logLines = append(m.logLines, "[partial] "+msg.detail)
+			m.logLines = append(m.logLines, lang.Tf("tui.log.partial", msg.detail))
 		}
 		m.recordOutcome(j, true)
 	default:
@@ -941,7 +983,7 @@ func (m appModel) onJobFinished(msg jobFinishedMsg) (tea.Model, tea.Cmd) {
 			resErr = fmt.Errorf("%s", msg.detail) // the child's real last line, not just "exited with code N"
 		}
 		m.results = append(m.results, jobResult{label: j.label, err: resErr, outDir: j.outDir})
-		m.logLines = append(m.logLines, "[err] "+resErr.Error())
+		m.logLines = append(m.logLines, lang.Tf("tui.log.err", resErr.Error()))
 		m.recordOutcome(j, false)
 	}
 	m.runProc = nil
@@ -1001,13 +1043,13 @@ func (m appModel) toMenu() appModel {
 func (m appModel) View() string {
 	switch m.screen {
 	case screenLoading:
-		return m.crumb() + "\n  Loading featured servers...\n\n" + hintBar(hint{gLeft + "/esc", "cancel"})
+		return m.crumb() + "\n  " + lang.T("tui.loading.featured") + "\n\n" + hintBar(hint{gLeft + "/esc", lang.T("tui.hint.cancel")})
 	case screenFeatured:
 		return m.featuredView()
 	case screenSaved:
-		return m.listView("Nothing saved yet - save an address from Recent or the address screen.", false)
+		return m.listView(lang.T("tui.empty.saved"), false)
 	case screenRecent:
-		return m.listView("No recent addresses yet - enter one from the address screen.", true)
+		return m.listView(lang.T("tui.empty.recent"), true)
 	case screenDecrypt:
 		return m.decryptView()
 	case screenEncrypt:
@@ -1030,16 +1072,16 @@ func (m appModel) View() string {
 // crumb renders the breadcrumb trail - dim parents, a highlighted current -
 // so the user can always see where they are.
 func (m appModel) crumb() string {
-	trail := []string{"Home"}
+	trail := []string{lang.T("tui.crumb.home")}
 	switch m.screen {
 	case screenLoading:
-		trail = append(trail, sectionTitle(screenFeatured), "Loading")
+		trail = append(trail, sectionTitle(screenFeatured), lang.T("tui.crumb.loading"))
 	case screenFeatured, screenSaved, screenRecent, screenDecrypt, screenEncrypt, screenAddress, screenSettings:
 		trail = append(trail, sectionTitle(m.screen))
 	case screenAction:
-		trail = append(trail, sectionTitle(m.actionFrom), "Choose an action")
+		trail = append(trail, sectionTitle(m.actionFrom), lang.T("tui.crumb.chooseAction"))
 	case screenRunning:
-		trail = append(trail, sectionTitle(m.actionFrom), "Working")
+		trail = append(trail, sectionTitle(m.actionFrom), lang.T("tui.crumb.working"))
 	case screenDone:
 		trail = append(trail, sectionTitle(m.actionFrom), m.doneTitle())
 	}
@@ -1155,8 +1197,8 @@ func menuHeader() string {
 		"",
 		"",
 		colorCyan + "bedrock-pack-tools" + colorReset,
-		colorDim + "Dump, download, and decrypt" + colorReset,
-		colorDim + "Minecraft Bedrock resource packs" + colorReset,
+		colorDim + lang.T("tui.header.tagline1") + colorReset,
+		colorDim + lang.T("tui.header.tagline2") + colorReset,
 		"",
 		"",
 	}
@@ -1188,17 +1230,17 @@ func (m appModel) menuView() string {
 			b.WriteString("\n") // air between logical groups
 			prevGroup = s.group
 		}
-		writeRow(&b, i == m.menuCursor, s.label)
+		writeRow(&b, i == m.menuCursor, s.label())
 	}
-	b.WriteString("\n  " + colorDim + sections[m.menuCursor].desc + colorReset + "\n")
+	b.WriteString("\n  " + colorDim + sections[m.menuCursor].desc() + colorReset + "\n")
 	if m.loadErr != nil {
-		b.WriteString("\n  " + colorRed + "Could not load featured servers: " + m.loadErr.Error() + colorReset + "\n")
+		b.WriteString("\n  " + colorRed + lang.Tf("tui.error.loadFeatured", m.loadErr.Error()) + colorReset + "\n")
 	}
 	b.WriteString("\n")
 	b.WriteString(hintBar(
-		hint{gUp + gDown, "move"},
-		hint{gRight + "/" + gEnter, "open"},
-		hint{gLeft + "/esc/q", "quit"},
+		hint{gUp + gDown, lang.T("tui.hint.move")},
+		hint{gRight + "/" + gEnter, lang.T("tui.hint.open")},
+		hint{gLeft + "/esc/q", lang.T("tui.hint.quit")},
 	))
 	return b.String()
 }
@@ -1214,7 +1256,7 @@ func (m appModel) featuredView() string {
 		b.WriteString("\n  " + colorDim + featuredHelp(s) + colorReset + "\n")
 	}
 	if m.resolvingFeatured {
-		b.WriteString("  " + colorCyan + "Resolving addresses..." + colorReset + "\n")
+		b.WriteString("  " + colorCyan + lang.T("tui.featured.resolving") + colorReset + "\n")
 	}
 	if m.note != "" {
 		noteColor := colorGreen
@@ -1226,22 +1268,22 @@ func (m appModel) featuredView() string {
 	b.WriteString("\n")
 	if len(m.featured.servers) == 0 {
 		// Empty catalog - only back does anything; move/space/continue/filter are no-ops.
-		b.WriteString(hintBar(hint{gLeft + "/esc", "back"}))
+		b.WriteString(hintBar(hint{gLeft + "/esc", lang.T("tui.hint.back")}))
 		return b.String()
 	}
 	hints := []hint{
-		{gUp + gDown, "move"},
-		{"space", "select"},
-		{gRight + "/" + gEnter, "continue"},
+		{gUp + gDown, lang.T("tui.hint.move")},
+		{"space", lang.T("tui.hint.select")},
+		{gRight + "/" + gEnter, lang.T("tui.hint.continue")},
 	}
 	if featuredHasUnresolved(m.fServers) {
-		hints = append(hints, hint{"^r", "resolve IPs"})
+		hints = append(hints, hint{"^r", lang.T("tui.hint.resolveIPs")})
 	}
-	hints = append(hints, hint{"type", "filter"})
+	hints = append(hints, hint{"type", lang.T("tui.hint.filter")})
 	if m.featured.filter != "" {
-		hints = append(hints, hint{gLeft + "/esc", "clear filter"})
+		hints = append(hints, hint{gLeft + "/esc", lang.T("tui.hint.clearFilter")})
 	} else {
-		hints = append(hints, hint{gLeft + "/esc", "back"})
+		hints = append(hints, hint{gLeft + "/esc", lang.T("tui.hint.back")})
 	}
 	b.WriteString(hintBar(hints...))
 	return b.String()
@@ -1251,15 +1293,15 @@ func (m appModel) featuredView() string {
 // address isn't known until it's resolved.
 func featuredHelp(s franchise.Server) string {
 	if s.HasAddress() {
-		return "Direct address: " + s.Address()
+		return lang.Tf("tui.featuredHelp.direct", s.Address())
 	}
 	switch s.Kind {
 	case franchise.KindGathering:
-		return "Live event - press ^r to resolve its address (or it resolves on download)."
+		return lang.T("tui.featuredHelp.liveEvent")
 	case franchise.KindPartnerExperience:
-		return "Experience server - press ^r to resolve its address (or it resolves on download)."
+		return lang.T("tui.featuredHelp.experience")
 	}
-	return "No public address for this entry."
+	return lang.T("tui.featuredHelp.none")
 }
 
 func (m appModel) listView(emptyMsg string, isRecent bool) string {
@@ -1268,7 +1310,7 @@ func (m appModel) listView(emptyMsg string, isRecent bool) string {
 	b.WriteString("\n")
 	if len(m.list.items) == 0 {
 		b.WriteString("  " + colorDim + emptyMsg + colorReset + "\n\n")
-		b.WriteString(hintBar(hint{gLeft + "/esc", "back"}))
+		b.WriteString(hintBar(hint{gLeft + "/esc", lang.T("tui.hint.back")}))
 		return b.String()
 	}
 	for i, addr := range m.list.items {
@@ -1295,14 +1337,14 @@ func (m appModel) listView(emptyMsg string, isRecent bool) string {
 	}
 	b.WriteString("\n")
 	hints := []hint{
-		{gUp + gDown, "move"},
-		{"space", "select"},
-		{gRight + "/" + gEnter, "continue"},
+		{gUp + gDown, lang.T("tui.hint.move")},
+		{"space", lang.T("tui.hint.select")},
+		{gRight + "/" + gEnter, lang.T("tui.hint.continue")},
 	}
 	if isRecent {
-		hints = append(hints, hint{"s", "save"})
+		hints = append(hints, hint{"s", lang.T("tui.hint.save")})
 	}
-	hints = append(hints, hint{"d", "forget"}, hint{gLeft + "/esc", "back"})
+	hints = append(hints, hint{"d", lang.T("tui.hint.forget")}, hint{gLeft + "/esc", lang.T("tui.hint.back")})
 	b.WriteString(hintBar(hints...))
 	return b.String()
 }
@@ -1312,19 +1354,19 @@ func (m appModel) addressView() string {
 	b.WriteString(m.crumb())
 	r := []rune(m.addr.value)
 	c := min(m.addr.cursor, len(r))
-	b.WriteString("\n  Server address: " + colorCyan + string(r[:c]) + caret + string(r[c:]) + colorReset + "\n")
+	b.WriteString("\n  " + lang.T("tui.address.label") + colorCyan + string(r[:c]) + caret + string(r[c:]) + colorReset + "\n")
 	if m.addr.err != "" {
 		b.WriteString("  " + colorRed + m.addr.err + colorReset + "\n")
 	}
 	if m.note != "" {
 		b.WriteString("  " + colorGreen + m.note + colorReset + "\n")
 	}
-	b.WriteString("  " + colorDim + "Example: play.example.net:19132 or 1.2.3.4:19132" + colorReset + "\n\n")
+	b.WriteString("  " + colorDim + lang.T("tui.address.example") + colorReset + "\n\n")
 	b.WriteString(hintBar(
-		hint{gEnter, "continue"},
-		hint{gLeft + gRight, "move caret"},
-		hint{"^s", "save"},
-		hint{"esc", "back"},
+		hint{gEnter, lang.T("tui.hint.continue")},
+		hint{gLeft + gRight, lang.T("tui.hint.moveCaret")},
+		hint{"^s", lang.T("tui.hint.save")},
+		hint{"esc", lang.T("tui.hint.back")},
 	))
 	return b.String()
 }
@@ -1334,15 +1376,15 @@ func (m appModel) encryptView() string {
 	b.WriteString(m.crumb())
 	r := []rune(m.enc.value)
 	c := min(m.enc.cursor, len(r))
-	b.WriteString("\n  Pack directory: " + colorCyan + string(r[:c]) + caret + string(r[c:]) + colorReset + "\n")
+	b.WriteString("\n  " + lang.T("tui.encrypt.label") + colorCyan + string(r[:c]) + caret + string(r[c:]) + colorReset + "\n")
 	if m.enc.err != "" {
 		b.WriteString("  " + colorRed + m.enc.err + colorReset + "\n")
 	}
-	b.WriteString("  " + colorDim + "Point at a folder with a manifest.json, e.g. ./MyPack_v1.0.0" + colorReset + "\n\n")
+	b.WriteString("  " + colorDim + lang.T("tui.encrypt.example") + colorReset + "\n\n")
 	b.WriteString(hintBar(
-		hint{gEnter, "encrypt"},
-		hint{gLeft + gRight, "move caret"},
-		hint{"esc", "back"},
+		hint{gEnter, lang.T("tui.hint.encrypt")},
+		hint{gLeft + gRight, lang.T("tui.hint.moveCaret")},
+		hint{"esc", lang.T("tui.hint.back")},
 	))
 	return b.String()
 }
@@ -1353,23 +1395,28 @@ func (m appModel) settingsView() string {
 	b.WriteString("\n")
 	signedIn := loadToken() != nil
 	if signedIn {
-		b.WriteString("  " + colorGreen + "Signed in" + colorReset + "\n")
+		b.WriteString("  " + colorGreen + lang.T("tui.settings.signedIn") + colorReset + "\n")
 	} else {
-		b.WriteString("  " + colorYellow + "Not signed in" + colorReset + "\n")
+		b.WriteString("  " + colorYellow + lang.T("tui.settings.notSignedIn") + colorReset + "\n")
 	}
 	if dir, ok := configDir(); ok {
-		b.WriteString("  " + colorDim + "config: " + dir + colorReset + "\n")
+		b.WriteString("  " + colorDim + lang.Tf("tui.settings.config", dir) + colorReset + "\n")
 	}
 	b.WriteString("\n")
 	rows := settingsRows(signedIn)
 	cursor := min(m.settingsCursor, len(rows)-1)
+	prevGroup := rows[0].group
 	for i, it := range rows {
-		writeRow(&b, i == cursor, it.label)
+		if it.group != prevGroup {
+			b.WriteString("\n") // air between logical groups
+			prevGroup = it.group
+		}
+		writeRow(&b, i == cursor, it.label())
 	}
-	b.WriteString("\n  " + colorDim + rows[cursor].desc + colorReset + "\n")
+	b.WriteString("\n  " + colorDim + rows[cursor].desc() + colorReset + "\n")
 	if m.confirm != confirmNone {
 		b.WriteString("\n  " + colorYellow + confirmPrompt(m.confirm) + colorReset + "\n")
-		b.WriteString(hintBar(hint{"y", "yes"}, hint{"n/esc", "cancel"}))
+		b.WriteString(hintBar(hint{"y", lang.T("tui.hint.yes")}, hint{"n/esc", lang.T("tui.hint.cancel")}))
 		return b.String()
 	}
 	if m.note != "" {
@@ -1381,9 +1428,9 @@ func (m appModel) settingsView() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(hintBar(
-		hint{gUp + gDown, "move"},
-		hint{gRight + "/" + gEnter, "select"},
-		hint{gLeft + "/esc", "back"},
+		hint{gUp + gDown, lang.T("tui.hint.move")},
+		hint{gRight + "/" + gEnter, lang.T("tui.hint.select")},
+		hint{gLeft + "/esc", lang.T("tui.hint.back")},
 	))
 	return b.String()
 }
@@ -1391,15 +1438,15 @@ func (m appModel) settingsView() string {
 func (m appModel) actionView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
-	b.WriteString("\n  " + colorDim + "Action for " + pluralServers(len(m.jobs)) + colorReset + "\n\n")
+	b.WriteString("\n  " + colorDim + lang.Tf("tui.action.for", pluralServers(len(m.jobs))) + colorReset + "\n\n")
 	for i, c := range actionChoices {
-		writeRow(&b, i == m.actionCursor, c.label)
+		writeRow(&b, i == m.actionCursor, c.label())
 	}
-	b.WriteString("\n  " + colorDim + actionChoices[m.actionCursor].desc + colorReset + "\n\n")
+	b.WriteString("\n  " + colorDim + actionChoices[m.actionCursor].desc() + colorReset + "\n\n")
 	b.WriteString(hintBar(
-		hint{gUp + gDown, "move"},
-		hint{gRight + "/" + gEnter, "start"},
-		hint{gLeft + "/esc", "back"},
+		hint{gUp + gDown, lang.T("tui.hint.move")},
+		hint{gRight + "/" + gEnter, lang.T("tui.hint.start")},
+		hint{gLeft + "/esc", lang.T("tui.hint.back")},
 	))
 	return b.String()
 }
@@ -1407,7 +1454,7 @@ func (m appModel) actionView() string {
 func (m appModel) runningView() string {
 	var b strings.Builder
 	b.WriteString(m.crumb())
-	b.WriteString("  " + colorDim + fmt.Sprintf("job %d/%d", min(m.jobIdx+1, len(m.jobs)), len(m.jobs)) + colorReset + "\n\n")
+	b.WriteString("  " + colorDim + lang.Tf("tui.running.job", min(m.jobIdx+1, len(m.jobs)), len(m.jobs)) + colorReset + "\n\n")
 
 	// Chrome around the log is about seven rows: the crumb (a blank + the
 	// trail), the job line plus a blank, an optional status line, a trailing
@@ -1428,13 +1475,13 @@ func (m appModel) runningView() string {
 	}
 	switch {
 	case m.canceled:
-		b.WriteString("  " + colorYellow + "[canceling]" + colorReset + "\n")
+		b.WriteString("  " + colorYellow + lang.T("tui.status.canceling") + colorReset + "\n")
 	case m.statusLn != "" && m.paused:
-		b.WriteString("  " + colorYellow + "[paused] " + m.truncate(m.statusLn) + colorReset + "\n")
+		b.WriteString("  " + colorYellow + lang.Tf("tui.status.pausedWith", m.truncate(m.statusLn)) + colorReset + "\n")
 	case m.statusLn != "":
 		b.WriteString("  " + colorCyan + m.truncate(m.statusLn) + colorReset + "\n")
 	case m.paused:
-		b.WriteString("  " + colorYellow + "[paused]" + colorReset + "\n")
+		b.WriteString("  " + colorYellow + lang.T("tui.status.paused") + colorReset + "\n")
 	}
 	b.WriteString("\n")
 	if m.canceled {
@@ -1442,22 +1489,22 @@ func (m appModel) runningView() string {
 	}
 	hints := []hint{}
 	if pauseSupported && m.runProc != nil { // pause is a no-op before the child is running
-		label := "pause"
+		label := lang.T("tui.hint.pause")
 		if m.paused {
-			label = "resume"
+			label = lang.T("tui.hint.resume")
 		}
 		hints = append(hints, hint{"p", label})
 	}
-	hints = append(hints, hint{gLeft + "/esc", "cancel"})
+	hints = append(hints, hint{gLeft + "/esc", lang.T("tui.hint.cancel")})
 	b.WriteString(hintBar(hints...))
 	return b.String()
 }
 
 func (m appModel) doneTitle() string {
 	if m.canceled {
-		return "Canceled"
+		return lang.T("tui.done.canceled")
 	}
-	return "Done"
+	return lang.T("tui.done.done")
 }
 
 func (m appModel) doneView() string {
@@ -1468,43 +1515,43 @@ func (m appModel) doneView() string {
 	for _, r := range m.results {
 		switch {
 		case r.err != nil:
-			b.WriteString("  " + colorRed + "[err]" + colorReset + "     " + r.label + " - " + r.err.Error() + "\n")
+			b.WriteString("  " + colorRed + lang.T("tui.done.err") + colorReset + "     " + r.label + " - " + r.err.Error() + "\n")
 		case r.partial:
 			partial++
-			line := "  " + colorYellow + "[partial]" + colorReset + " " + r.label
+			line := "  " + colorYellow + lang.T("tui.done.partial") + colorReset + " " + r.label
 			if r.detail != "" {
 				line += " - " + r.detail
 			}
 			b.WriteString(line + "\n")
 		default:
 			ok++
-			b.WriteString("  " + colorGreen + "[ok]" + colorReset + "      " + r.label + "\n")
+			b.WriteString("  " + colorGreen + lang.T("tui.done.ok") + colorReset + "      " + r.label + "\n")
 			if r.outDir != "" {
-				b.WriteString("        " + colorDim + "decrypted -> " + colorReset + m.truncate(r.outDir) + "\n")
+				b.WriteString("        " + colorDim + lang.T("tui.done.decryptedTo") + colorReset + m.truncate(r.outDir) + "\n")
 			}
 		}
 	}
-	fmt.Fprintf(&b, "\n  %d/%d succeeded\n", ok, len(m.results))
+	b.WriteString("\n  " + lang.Tf("tui.done.succeeded", ok, len(m.results)) + "\n")
 	if partial > 0 {
-		fmt.Fprintf(&b, "  %d partial - output landed but the run did not fully finish\n", partial)
+		b.WriteString("  " + lang.Tf("tui.done.partialSummary", partial) + "\n")
 	}
 	if m.runSkipped > 0 {
-		fmt.Fprintf(&b, "  %d skipped - needed a download first\n", m.runSkipped)
+		b.WriteString("  " + lang.Tf("tui.done.skippedSummary", m.runSkipped) + "\n")
 	}
 	if ok > 0 {
 		switch {
 		case m.actionFrom == screenDecrypt:
 			// the per-row "decrypted -> <path>" lines above already show where
 		case m.actionFrom == screenEncrypt:
-			b.WriteString("  .mcpack + .mcpack.key written to the current directory\n")
+			b.WriteString("  " + lang.T("tui.done.encryptWritten") + "\n")
 		case m.act == actionKeys:
-			b.WriteString("  keys saved to the current directory\n")
+			b.WriteString("  " + lang.T("tui.done.keysSaved") + "\n")
 		default:
-			b.WriteString("  downloads in the current directory\n")
+			b.WriteString("  " + lang.T("tui.done.downloadsCurrent") + "\n")
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(hintBar(hint{"any key", "back to menu"}))
+	b.WriteString(hintBar(hint{"any key", lang.T("tui.hint.backToMenu")}))
 	return b.String()
 }
 
@@ -1527,25 +1574,29 @@ func clip(s string, width int) string {
 	return s[:width-3] + "..."
 }
 
-func pluralServers(n int) string {
-	if n == 1 {
-		return "1 server"
+// pluralRu picks the Russian plural form for n (one for ...1 not 11, few for
+// ...2-4 not 12-14, else many) and formats it with n.
+func pluralRu(n int, one, few, many string) string {
+	switch {
+	case n%10 == 1 && n%100 != 11:
+		return fmt.Sprintf(one, n)
+	case n%10 >= 2 && n%10 <= 4 && (n%100 < 12 || n%100 > 14):
+		return fmt.Sprintf(few, n)
+	default:
+		return fmt.Sprintf(many, n)
 	}
-	return fmt.Sprintf("%d servers", n)
+}
+
+func pluralServers(n int) string {
+	return pluralRu(n, lang.T("tui.plural.server.one"), lang.T("tui.plural.server.few"), lang.T("tui.plural.server.many"))
 }
 
 func pluralPacks(n int) string {
-	if n == 1 {
-		return "1 pack"
-	}
-	return fmt.Sprintf("%d packs", n)
+	return pluralRu(n, lang.T("tui.plural.pack.one"), lang.T("tui.plural.pack.few"), lang.T("tui.plural.pack.many"))
 }
 
 func pluralAddrs(n int) string {
-	if n == 1 {
-		return "1 address"
-	}
-	return fmt.Sprintf("%d addresses", n)
+	return pluralRu(n, lang.T("tui.plural.addr.one"), lang.T("tui.plural.addr.few"), lang.T("tui.plural.addr.many"))
 }
 
 // --- address field -------------------------------------------------------
@@ -1582,10 +1633,10 @@ func validateAddress(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	host, port, err := net.SplitHostPort(s)
 	if err != nil || host == "" {
-		return "", fmt.Errorf("expected host:port, e.g. play.example.net:19132")
+		return "", fmt.Errorf("%s", lang.T("tui.validate.expectAddr"))
 	}
 	if _, perr := strconv.ParseUint(port, 10, 16); perr != nil {
-		return "", fmt.Errorf("expected host:port, e.g. play.example.net:19132")
+		return "", fmt.Errorf("%s", lang.T("tui.validate.expectAddr"))
 	}
 	return s, nil
 }
@@ -1661,9 +1712,9 @@ func (m appModel) recentStatusLabel(addr string) string {
 	if !ok {
 		return ""
 	}
-	label := colorGreen + "ok" + colorReset
+	label := colorGreen + lang.T("tui.recentStatus.ok") + colorReset
 	if !st.OK {
-		label = colorRed + "failed" + colorReset
+		label = colorRed + lang.T("tui.recentStatus.failed") + colorReset
 	}
 	if age := ageLabel(st.LastUsed); age != "" {
 		label += colorDim + " · " + age + colorReset
@@ -1764,7 +1815,7 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "g":
 		if i, ok := m.currentDownload(); ok {
 			if m.dls[i].Address == "" {
-				m.note = "no saved address for this entry - press d to forget it"
+				m.note = lang.T("tui.note.noAddrEntry")
 				return m, nil
 			}
 			d := m.dls[i]
@@ -1804,7 +1855,7 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		if len(jobs) == 0 {
-			m.note = "nothing to decrypt - the packs are gone, press g to download them again"
+			m.note = lang.T("tui.note.nothingToDecrypt")
 			return m, nil
 		}
 		nm, cmd := m.startRun(jobs, actionDownloadDecrypt)
@@ -1819,8 +1870,8 @@ func (m appModel) decryptView() string {
 	b.WriteString(m.crumb())
 	b.WriteString("\n")
 	if len(m.dls) == 0 {
-		b.WriteString("  " + colorDim + "Nothing downloaded yet - download a server first, then come back to decrypt." + colorReset + "\n\n")
-		b.WriteString(hintBar(hint{gLeft + "/esc", "back"}))
+		b.WriteString("  " + colorDim + lang.T("tui.empty.decrypt") + colorReset + "\n\n")
+		b.WriteString(hintBar(hint{gLeft + "/esc", lang.T("tui.hint.back")}))
 		return b.String()
 	}
 	for i, d := range m.dls {
@@ -1844,12 +1895,12 @@ func (m appModel) decryptView() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(hintBar(
-		hint{gUp + gDown, "move"},
-		hint{"space", "select"},
-		hint{gRight + "/" + gEnter, "decrypt"},
-		hint{"g", "download+decrypt"},
-		hint{"d", "forget"},
-		hint{gLeft + "/esc", "back"},
+		hint{gUp + gDown, lang.T("tui.hint.move")},
+		hint{"space", lang.T("tui.hint.select")},
+		hint{gRight + "/" + gEnter, lang.T("tui.hint.decrypt")},
+		hint{"g", lang.T("tui.hint.downloadDecrypt")},
+		hint{"d", lang.T("tui.hint.forget")},
+		hint{gLeft + "/esc", lang.T("tui.hint.back")},
 	))
 	return b.String()
 }
@@ -1857,9 +1908,9 @@ func (m appModel) decryptView() string {
 func decryptBadge(st decryptState) string {
 	// openDecrypt only lists entries that have a keys file, so keys is always
 	// present on this screen.
-	badge := colorDim + pluralPacks(st.packs) + " · " + colorReset + colorGreen + "keys" + colorReset
+	badge := colorDim + pluralPacks(st.packs) + " · " + colorReset + colorGreen + lang.T("tui.decrypt.badge.keys") + colorReset
 	if st.decrypted {
-		badge += colorDim + " · " + colorReset + colorGreen + "decrypted" + colorReset
+		badge += colorDim + " · " + colorReset + colorGreen + lang.T("tui.decrypt.badge.decrypted") + colorReset
 	}
 	return badge
 }
@@ -1870,14 +1921,14 @@ func decryptBadge(st decryptState) string {
 func decryptHelp(st decryptState, hasAddr bool) string {
 	switch {
 	case st.decryptable() && st.decrypted:
-		return fmt.Sprintf("Already decrypted - press enter to re-decrypt %s into a decrypted/<server>/ folder beside the packs.", pluralPacks(st.packs))
+		return lang.Tf("tui.decryptHelp.reDecrypt", pluralPacks(st.packs))
 	case st.decryptable():
-		return fmt.Sprintf("Decrypt %s - output lands in a decrypted/<server>/ folder beside the packs.", pluralPacks(st.packs))
+		return lang.Tf("tui.decryptHelp.decrypt", pluralPacks(st.packs))
 	default: // packs gone, keys still on disk
 		if hasAddr {
-			return "Keys are here but the packs are gone - press g to download and decrypt them again."
+			return lang.T("tui.decryptHelp.packsGone")
 		}
-		return "Keys are here but the packs are gone, and no saved address to re-download."
+		return lang.T("tui.decryptHelp.noAddr")
 	}
 }
 
@@ -1980,17 +2031,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) View() string {
 	var b strings.Builder
 	if m.filter != "" {
-		b.WriteString("  " + colorDim + "filter: " + m.filter + colorReset + "\n")
+		b.WriteString("  " + colorDim + lang.Tf("tui.featuredList.filter", m.filter) + colorReset + "\n")
 		if hidden := m.hiddenPicks(); hidden > 0 {
-			b.WriteString("  " + colorDim + fmt.Sprintf("%d selected (%d hidden by filter)", len(m.picked), hidden) + colorReset + "\n")
+			b.WriteString("  " + colorDim + lang.Tf("tui.featuredList.selHidden", len(m.picked), hidden) + colorReset + "\n")
 		}
 	}
 	b.WriteString("\n")
 	if len(m.filtered) == 0 {
 		if m.filter == "" {
-			b.WriteString("   " + colorDim + "No featured servers right now - try again later." + colorReset + "\n")
+			b.WriteString("   " + colorDim + lang.T("tui.featuredList.empty") + colorReset + "\n")
 		} else {
-			b.WriteString("   " + colorDim + "No servers match your filter." + colorReset + "\n")
+			b.WriteString("   " + colorDim + lang.T("tui.featuredList.noMatch") + colorReset + "\n")
 		}
 		return b.String()
 	}

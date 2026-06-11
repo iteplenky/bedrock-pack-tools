@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"golang.org/x/oauth2"
 )
 
@@ -73,9 +74,9 @@ func humanize(err error) (diagnostic, bool) {
 	// Substring fallback for the mctoken.go discovery wraps.
 	if strings.Contains(msg, "discover services:") || strings.Contains(msg, "decode auth environment") {
 		return diagnostic{
-			headline: "Mojang service discovery failed",
-			body:     "We couldn't fetch the service catalog from client.discovery.minecraft-services.net. The franchise chain can't start without it.",
-			fix:      "Almost always either a transient Mojang outage or your network blocking minecraft-services.net. Retry in a few minutes; if it keeps happening, confirm reachability with `curl -v https://client.discovery.minecraft-services.net/`.",
+			headline: lang.T("humanize.discovery.headline"),
+			body:     lang.T("humanize.discovery.body"),
+			fix:      lang.T("humanize.discovery.fix"),
 		}, true
 	}
 
@@ -94,21 +95,21 @@ func humanize(err error) (diagnostic, bool) {
 			return appLayerKickDiag(game, msg), true
 		case containsAny(low, "protocol", "incompatible", "outdated"):
 			return diagnostic{
-				headline: game + " is running a different protocol version",
-				body:     "The server's Minecraft Bedrock version doesn't match what this tool's gophertunnel was built against.",
-				fix:      "Wait for a tool update that targets the new Bedrock protocol, or downgrade the server temporarily.",
+				headline: lang.Tf("humanize.protocol.headline", game),
+				body:     lang.T("humanize.protocol.body"),
+				fix:      lang.T("humanize.protocol.fix"),
 			}, true
 		case containsAny(low, "kicked", "disconnect", "banned"):
 			return diagnostic{
-				headline: game + " kicked us during the login handshake",
-				body:     "The server accepted the connection but rejected the session - often whitelist, ban, or anti-bot.",
-				fix:      "If the same MSA can join in-game and not here, the server may be filtering on user-agent / client signature. There's no general fix from the tool side.",
+				headline: lang.Tf("humanize.kick.headline", game),
+				body:     lang.T("humanize.kick.body"),
+				fix:      lang.T("humanize.kick.fix"),
 			}, true
 		}
 		return diagnostic{
-			headline: "Couldn't connect to " + game,
-			body:     "The RakNet handshake failed. The inner error has the protocol-level details.",
-			fix:      "Confirm the host:port is reachable from the in-game Servers tab. If it works there but not here, capture both sessions with Wireshark and compare the first few packets.",
+			headline: lang.Tf("humanize.raknet.headline", game),
+			body:     lang.T("humanize.raknet.body"),
+			fix:      lang.T("humanize.raknet.fix"),
 		}, true
 	}
 
@@ -121,87 +122,80 @@ func classifyOurSentinels(err error) (diagnostic, bool) {
 	switch {
 	case errors.Is(err, franchise.ErrExperienceOffline):
 		return diagnostic{
-			headline: "That slot has no active venue right now",
-			body:     "Live Events and a few partner slots only resolve to a server during their event window. Outside the window Mojang returns 404 on the join endpoint.",
-			fix: "Re-run `bedrock-pack-tools featured` later - the venue address will appear when the slot is live.\n" +
-				"Or pick a different index from the list; entries that already show host:port are joinable anytime.",
+			headline: lang.T("humanize.venue.headline"),
+			body:     lang.T("humanize.venue.body"),
+			fix:      lang.T("humanize.venue.fix"),
 		}, true
 
 	case errors.Is(err, franchise.ErrForbidden):
 		return diagnostic{
-			headline: "Mojang won't let this account reach that slot",
-			body:     "Your token is valid (other entries resolve fine), but Mojang returned 403 Forbidden for this one. Some experiences and events are region-locked or only joinable from the official client.",
-			fix: "Pick a different entry, ideally one that already shows host:port.\n" +
-				"This isn't a token problem - re-authenticating won't change it.",
+			headline: lang.T("humanize.forbidden.headline"),
+			body:     lang.T("humanize.forbidden.body"),
+			fix:      lang.T("humanize.forbidden.fix"),
 		}, true
 
 	case errors.Is(err, franchise.ErrAuthRejected):
 		// Reaching the user means the featured.go re-mint retry also failed.
 		return diagnostic{
-			headline: "Xbox identity was rejected by Mojang's franchise services",
-			body:     "We re-minted the token once and Mojang still rejected it. That usually means the underlying Microsoft account itself is now in a bad state, not just our cache.",
-			fix: "Delete the cached tokens and re-authenticate from scratch:\n" +
-				"  rm \"" + mustTokenPath() + "\"\n" +
-				"  rm \"" + mustMCTokenPath() + "\"\n" +
-				"Then re-run. If it still fails, the MSA probably needs attention at account.microsoft.com.",
+			headline: lang.T("humanize.authrejected.headline"),
+			body:     lang.T("humanize.authrejected.body"),
+			fix:      lang.Tf("humanize.authrejected.fix", mustTokenPath(), mustMCTokenPath()),
 		}, true
 
 	case errors.Is(err, errPackNoManifest):
 		return diagnostic{
-			headline: "That folder isn't a valid resource pack",
-			body:     "A Bedrock pack must have manifest.json at its top level with a header.uuid field. We couldn't find it.",
-			fix:      "Make sure you're pointing at the directory that contains manifest.json directly (not its parent). If you unzipped a .mcpack, the manifest is one level inside.",
+			headline: lang.T("humanize.nomanifest.headline"),
+			body:     lang.T("humanize.nomanifest.body"),
+			fix:      lang.T("humanize.nomanifest.fix"),
 		}, true
 
 	case errors.Is(err, errPackBadManifest):
 		return diagnostic{
-			headline: "manifest.json is unreadable or malformed",
-			body:     "The file exists but we couldn't read it or parse it as JSON.",
-			fix:      "Open manifest.json and check it's valid JSON (trailing commas, smart quotes, and BOMs are common culprits).",
+			headline: lang.T("humanize.badmanifest.headline"),
+			body:     lang.T("humanize.badmanifest.body"),
+			fix:      lang.T("humanize.badmanifest.fix"),
 		}, true
 
 	case errors.Is(err, errPackBadKeyLen):
 		return diagnostic{
-			headline: "Key length is wrong",
-			body:     "Bedrock pack keys are exactly 32 ASCII characters (raw, not hex-encoded, not base64).",
-			fix:      "Copy the key directly from keys.json - the whole string between the quotes, no surrounding whitespace.",
+			headline: lang.T("humanize.badkeylen.headline"),
+			body:     lang.T("humanize.badkeylen.body"),
+			fix:      lang.T("humanize.badkeylen.fix"),
 		}, true
 
 	case errors.Is(err, errPackWrongKey):
 		return diagnostic{
-			headline: "Decryption failed - likely the wrong key for this pack",
-			body:     "Bedrock pack keys are pack-specific. Using a key from a different pack produces unreadable output.",
-			fix: "Open the keys.json you got from `download` (or the partner's keys file) and look up the key by the pack's UUID (header.uuid in manifest.json).\n" +
-				"If you only have one keys.json and one pack, double-check the pack UUID matches a key entry.",
+			headline: lang.T("humanize.wrongkey.headline"),
+			body:     lang.T("humanize.wrongkey.body"),
+			fix:      lang.T("humanize.wrongkey.fix"),
 		}, true
 
 	case errors.Is(err, errPackTruncated):
 		return diagnostic{
-			headline: "Pack file is corrupted (contents.json truncated)",
-			body:     "The pack's contents.json is shorter than the encryption header it should start with - the download was likely interrupted.",
-			fix:      "Re-run `bedrock-pack-tools download` against the same server, or grab the pack again from wherever it came from.",
+			headline: lang.T("humanize.truncated.headline"),
+			body:     lang.T("humanize.truncated.body"),
+			fix:      lang.T("humanize.truncated.fix"),
 		}, true
 
 	case errors.Is(err, errPackBadProtocol):
 		return diagnostic{
-			headline: "Server sent an unexpected pack-info payload",
-			body:     "The ResourcePacksInfo packet didn't decode against the protocol shape gophertunnel was built against. Usually this means Mojang shipped a new Bedrock version and the tool hasn't caught up.",
-			fix:      "Check the latest release at github.com/iteplenky/bedrock-pack-tools and update. If you're already on latest, please open an issue with the server address and your Bedrock client version.",
+			headline: lang.T("humanize.badprotocol.headline"),
+			body:     lang.T("humanize.badprotocol.body"),
+			fix:      lang.T("humanize.badprotocol.fix"),
 		}, true
 
 	case errors.Is(err, errPackBadZip):
 		return diagnostic{
-			headline: "Pack download was incomplete or not a valid zip",
-			body:     "We received pack bytes but couldn't open them as a zip archive. Most often a truncated transfer.",
-			fix:      "Re-run the download; transient transfer failures usually clear on the next attempt.",
+			headline: lang.T("humanize.badzip.headline"),
+			body:     lang.T("humanize.badzip.body"),
+			fix:      lang.T("humanize.badzip.fix"),
 		}, true
 
 	case errors.Is(err, errPackEmpty):
 		return diagnostic{
-			headline: "Pack has nothing to encrypt",
-			body:     "Encryption produces a Bedrock-loadable .mcpack only when there's at least one resource file beyond manifest.json and pack_icon.png. We didn't find any.",
-			fix: "Confirm you're pointing at the pack root and that it contains the textures / behaviour / sound files you expect.\n" +
-				"If you really wanted to ship just the manifest, use any zip tool - encryption adds no value here.",
+			headline: lang.T("humanize.empty.headline"),
+			body:     lang.T("humanize.empty.body"),
+			fix:      lang.T("humanize.empty.fix"),
 		}, true
 	}
 	return diagnostic{}, false
@@ -218,21 +212,21 @@ func classifyOAuth(err error) (diagnostic, bool) {
 	switch rErr.ErrorCode {
 	case "authorization_pending", "expired_token", "slow_down":
 		return diagnostic{
-			headline: "Microsoft sign-in didn't complete in time",
-			body:     "The Xbox Live device-code prompt expired before you finished entering the code at microsoft.com/link.",
-			fix:      "Re-run the same command. The new code only lives ~15 minutes, so finish the browser step promptly.",
+			headline: lang.T("humanize.oauthtiming.headline"),
+			body:     lang.T("humanize.oauthtiming.body"),
+			fix:      lang.T("humanize.oauthtiming.fix"),
 		}, true
 	case "invalid_grant":
 		return diagnostic{
-			headline: "Cached Microsoft refresh token is no longer valid",
-			body:     "Microsoft revoked or aged-out the refresh token in `" + mustTokenPath() + "`. That happens after long inactivity, password resets, or 2FA changes.",
-			fix:      "Delete the cached token and re-authenticate from scratch:\n  rm \"" + mustTokenPath() + "\"",
+			headline: lang.T("humanize.oauthgrant.headline"),
+			body:     lang.Tf("humanize.oauthgrant.body", mustTokenPath()),
+			fix:      lang.Tf("humanize.oauthgrant.fix", mustTokenPath()),
 		}, true
 	}
 	return diagnostic{
-		headline: "Microsoft sign-in failed (OAuth `" + rErr.ErrorCode + "`)",
-		body:     "Microsoft's OAuth endpoint returned an error we don't have a specific message for.",
-		fix:      "Retry once. If it persists, delete the cached token at `" + mustTokenPath() + "` and authenticate from scratch.",
+		headline: lang.Tf("humanize.oauthgeneric.headline", rErr.ErrorCode),
+		body:     lang.T("humanize.oauthgeneric.body"),
+		fix:      lang.Tf("humanize.oauthgeneric.fix", mustTokenPath()),
 	}, true
 }
 
@@ -242,21 +236,21 @@ func classifyFS(err error) (diagnostic, bool) {
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		return diagnostic{
-			headline: "Permission denied writing to disk",
-			body:     "The OS refused the file or directory operation. The tool can't create the output it needs.",
-			fix:      "Pass an output directory you own as the last argument (e.g. `~/some-folder`), or re-run with appropriate permissions on the existing target.",
+			headline: lang.T("humanize.fsperm.headline"),
+			body:     lang.T("humanize.fsperm.body"),
+			fix:      lang.T("humanize.fsperm.fix"),
 		}, true
 	case errors.Is(err, syscall.ENOSPC):
 		return diagnostic{
-			headline: "Disk is full",
-			body:     "The OS reported the target filesystem is out of space.",
-			fix:      "Free some space or point output at a different volume.",
+			headline: lang.T("humanize.fsnospace.headline"),
+			body:     lang.T("humanize.fsnospace.body"),
+			fix:      lang.T("humanize.fsnospace.fix"),
 		}, true
 	case errors.Is(err, syscall.EROFS):
 		return diagnostic{
-			headline: "Target is on a read-only filesystem",
-			body:     "Common on macOS when writing under /System or /Volumes/Macintosh HD (the signed system volume).",
-			fix:      "Point output somewhere writable - your home directory is a safe default.",
+			headline: lang.T("humanize.fsrofs.headline"),
+			body:     lang.T("humanize.fsrofs.body"),
+			fix:      lang.T("humanize.fsrofs.fix"),
 		}, true
 	}
 	return diagnostic{}, false
@@ -269,38 +263,34 @@ func classifyTLS(err error) (diagnostic, bool) {
 	var ua x509.UnknownAuthorityError
 	if errors.As(err, &ua) {
 		return diagnostic{
-			headline: "TLS handshake failed for " + cmp.Or(host, "the upstream service"),
-			body:     "The server's certificate was signed by a CA your system doesn't trust. The most common cause is a corporate HTTPS-inspecting proxy.",
-			causes: []string{
-				"Corporate / school HTTPS-inspecting proxy (Zscaler, Netskope, Palo Alto)",
-				"Out-of-date system CA bundle (rare; older Linux distros)",
-			},
-			fix: "If you're on a corporate network, ask IT for the proxy's root CA and install it system-wide.\n" +
-				"On a personal machine try the command off this network (mobile hotspot) to confirm.",
+			headline: lang.Tf("humanize.tlsunknownca.headline", cmp.Or(host, lang.T("humanize.placeholder.upstream"))),
+			body:     lang.T("humanize.tlsunknownca.body"),
+			causes:   lang.Tlist("humanize.tlsunknownca.causes"),
+			fix:      lang.T("humanize.tlsunknownca.fix"),
 		}, true
 	}
 	var ci x509.CertificateInvalidError
 	if errors.As(err, &ci) {
 		if ci.Reason == x509.Expired {
 			return diagnostic{
-				headline: "TLS certificate looks expired for " + cmp.Or(host, "the upstream service"),
-				body:     "The server's cert is past its validity window from your machine's point of view. Most often that's a wrong system clock, not an actual cert problem.",
-				fix:      "Check your system clock. On macOS: `sudo sntp -sS time.apple.com`. On Linux: `timedatectl status`.",
+				headline: lang.Tf("humanize.tlsexpired.headline", cmp.Or(host, lang.T("humanize.placeholder.upstream"))),
+				body:     lang.T("humanize.tlsexpired.body"),
+				fix:      lang.T("humanize.tlsexpired.fix"),
 			}, true
 		}
 		return diagnostic{
-			headline: "TLS certificate is invalid for " + cmp.Or(host, "the upstream service"),
-			body:     "The cert failed validation: " + ci.Error() + ".",
-			fix:      "Confirm the URL and system clock. If the issue persists, capture the cert with `openssl s_client -connect " + cmp.Or(host, "<host>") + ":443` for diagnostics.",
+			headline: lang.Tf("humanize.tlsinvalid.headline", cmp.Or(host, lang.T("humanize.placeholder.upstream"))),
+			body:     lang.Tf("humanize.tlsinvalid.body", ci.Error()),
+			fix:      lang.Tf("humanize.tlsinvalid.fix", cmp.Or(host, lang.T("humanize.placeholder.host"))),
 		}, true
 	}
 	// Substring fallback for stringified TLS errors.
 	low := strings.ToLower(err.Error())
 	if strings.Contains(low, "tls: handshake failure") || strings.Contains(low, "tls: bad certificate") {
 		return diagnostic{
-			headline: "TLS handshake failed for " + cmp.Or(host, "the upstream service"),
-			body:     "The TLS layer rejected the connection before getting to the application protocol.",
-			fix:      "Often a corporate HTTPS proxy or an outdated CA bundle. Try the command on a different network to isolate the cause.",
+			headline: lang.Tf("humanize.tlshandshake.headline", cmp.Or(host, lang.T("humanize.placeholder.upstream"))),
+			body:     lang.T("humanize.tlshandshake.body"),
+			fix:      lang.T("humanize.tlshandshake.fix"),
 		}, true
 	}
 	return diagnostic{}, false
@@ -321,9 +311,9 @@ func classifyNet(err error) (diagnostic, bool) {
 	if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
 		host := extractHost(err)
 		return diagnostic{
-			headline: "No route to " + cmp.Or(host, "the upstream service"),
-			body:     "Your machine has no route at all to reach that IP. Often a wifi or VPN that's only half-up.",
-			fix:      "Toggle wifi / VPN. If you're on a corporate VPN, confirm split-tunnel rules let Microsoft endpoints out.",
+			headline: lang.Tf("humanize.noroute.headline", cmp.Or(host, lang.T("humanize.placeholder.upstream"))),
+			body:     lang.T("humanize.noroute.body"),
+			fix:      lang.T("humanize.noroute.fix"),
 		}, true
 	}
 	if isTimeoutErr(err) {
@@ -346,15 +336,10 @@ func classifyNet(err error) (diagnostic, bool) {
 // dnsDiag is shared by the typed (net.DNSError) and substring DNS paths.
 func dnsDiag(host string) diagnostic {
 	return diagnostic{
-		headline: "DNS lookup failed for " + cmp.Or(host, "the upstream host"),
-		body:     "Your system couldn't resolve the hostname to an IP. The tool never got far enough to make a network request.",
-		causes: []string{
-			"Captive portal (hotel/cafe wifi that hasn't been signed into yet)",
-			"DNS server outage or misconfigured resolver",
-			"VPN with broken split-DNS",
-		},
-		fix: "Try `nslookup " + cmp.Or(host, "device.auth.xboxlive.com") + "`.\n" +
-			"If it also fails, switch DNS to 1.1.1.1 or 8.8.8.8 and retry.",
+		headline: lang.Tf("humanize.dns.headline", cmp.Or(host, lang.T("humanize.placeholder.upstreamhost"))),
+		body:     lang.T("humanize.dns.body"),
+		causes:   lang.Tlist("humanize.dns.causes"),
+		fix:      lang.Tf("humanize.dns.fix", cmp.Or(host, lang.T("humanize.placeholder.dnshost"))),
 	}
 }
 
@@ -363,16 +348,15 @@ func refusedDiag(err error) diagnostic {
 	host := extractHost(err)
 	if game := firstMatch(reGameServer, err.Error()); game != "" {
 		return diagnostic{
-			headline: game + " refused the connection",
-			body:     "The host is reachable but nothing's listening on that port. Usually means the server is offline, the port is wrong, or you've been IP-banned.",
-			fix: "Confirm the address is right (default Bedrock port is 19132).\n" +
-				"If you can join from the in-game Servers list but not via this tool, your IP may be banned at the network level.",
+			headline: lang.Tf("humanize.refusedgame.headline", game),
+			body:     lang.T("humanize.refusedgame.body"),
+			fix:      lang.T("humanize.refusedgame.fix"),
 		}
 	}
 	return diagnostic{
-		headline: "Connection refused by " + cmp.Or(host, "the upstream service"),
-		body:     "The host is reachable but actively refused our connection. For Microsoft / Mojang services this is almost always a temporary outage on their side.",
-		fix:      "Wait a few minutes and retry. If it persists for more than ~30 min, check https://xnotify.xboxlive.com/servicestatus.",
+		headline: lang.Tf("humanize.refused.headline", cmp.Or(host, lang.T("humanize.placeholder.upstream"))),
+		body:     lang.T("humanize.refused.body"),
+		fix:      lang.T("humanize.refused.fix"),
 	}
 }
 
@@ -382,14 +366,14 @@ func refusedDiag(err error) diagnostic {
 // The verbatim kick string from the server is included in the body
 // when we can recover it.
 func appLayerKickDiag(game, msg string) diagnostic {
-	body := "RakNet handshake and Xbox sign-in both succeeded. The server's app layer rejected the session afterwards - typical anti-bot heuristic on big Bedrock networks."
+	body := lang.T("humanize.applayerkick.bodybase")
 	if kick := extractServerKickMessage(msg); kick != "" {
-		body += "\n\nReason returned by the server:\n  " + strings.ReplaceAll(kick, "\n", "\n  ")
+		body += lang.Tf("humanize.applayerkick.bodyreason", strings.ReplaceAll(kick, "\n", "\n  "))
 	}
 	return diagnostic{
-		headline: game + " kicked us after the handshake",
+		headline: lang.Tf("humanize.applayerkick.headline", game),
 		body:     body,
-		fix:      "Many large Bedrock partner servers run anti-bot heuristics that reject any client whose packet fingerprint doesn't match the official client. There's no general workaround from the tool side - those servers don't want third-party clients through.",
+		fix:      lang.T("humanize.applayerkick.fix"),
 	}
 }
 
@@ -431,42 +415,28 @@ func timeoutDiag(err error) diagnostic {
 	game := firstMatch(reGameServer, err.Error())
 	if game != "" && !strings.Contains(host, "xboxlive") && !strings.Contains(host, "playfab") {
 		return diagnostic{
-			headline: "Couldn't reach the Bedrock server at " + game,
-			body:     "Connection timed out at the RakNet layer. Either the server is offline, the address is wrong, or something between you and it is dropping UDP.",
-			causes: []string{
-				"Server is offline or restarting",
-				"Wrong host / port (default is 19132)",
-				"ISP / firewall blocks outbound UDP",
-			},
-			fix: "Try the same address in the in-game Servers tab.\n" +
-				"If the game can connect but the tool can't, check whether anything filters UDP on your network.",
+			headline: lang.Tf("humanize.timeoutgame.headline", game),
+			body:     lang.T("humanize.timeoutgame.body"),
+			causes:   lang.Tlist("humanize.timeoutgame.causes"),
+			fix:      lang.T("humanize.timeoutgame.fix"),
 		}
 	}
 	if isMicrosoftHost(host) {
 		return diagnostic{
-			headline: "Couldn't reach " + friendlyService(host),
-			body:     host + " isn't responding from your network.",
-			causes: []string{
-				"ISP-level blocking of Xbox / Microsoft services in your region",
-				"Corporate, school, or hotel firewall",
-				"Aggressive antivirus or \"Family Safety\" software blocking xboxlive.com",
-				"VPN required by your network (rare but seen)",
-			},
-			fix: "Quick check: `curl -v https://" + host + "/`\n" +
-				"If curl also hangs, it's your network - use a VPN to a region where Xbox Live works (most EU/US locations are fine).",
+			headline: lang.Tf("humanize.timeoutms.headline", friendlyService(host)),
+			body:     lang.Tf("humanize.timeoutms.body", host),
+			causes:   lang.Tlist("humanize.timeoutms.causes"),
+			fix:      lang.Tf("humanize.timeoutms.fix", host),
 		}
 	}
 	// Unknown host: skip the curl-against-xboxlive hint - it could be
 	// a CDN or third party where the Xbox-VPN advice would be wrong.
-	target := cmp.Or(host, "the upstream service")
+	target := cmp.Or(host, lang.T("humanize.placeholder.upstream"))
 	return diagnostic{
-		headline: "Couldn't reach " + target,
-		body:     "The request timed out without reaching the server.",
-		causes: []string{
-			"The server is offline or overloaded",
-			"Your network blocks the destination (firewall, ISP, VPN split-tunnel)",
-		},
-		fix: "Try again in a few minutes. If it keeps failing, capture the chain in Details below and confirm reachability with curl or your browser.",
+		headline: lang.Tf("humanize.timeout.headline", target),
+		body:     lang.T("humanize.timeout.body"),
+		causes:   lang.Tlist("humanize.timeout.causes"),
+		fix:      lang.T("humanize.timeout.fix"),
 	}
 }
 
@@ -509,42 +479,40 @@ func classifyXSTS(msg, low string) (diagnostic, bool) {
 	case containsAny(msg, "2148916227", "8015dc03", "Identity ban"),
 		containsAny(low, "account banned"):
 		return diagnostic{
-			headline: "This Microsoft account is banned from Xbox Live",
-			body:     "Microsoft's identity service rejected the sign-in with an account-ban code. We can't work around it from the tool.",
-			fix:      "Use a different Microsoft account. Bans are a Microsoft policy decision, appealable only via account.microsoft.com.",
+			headline: lang.T("humanize.xstsbanned.headline"),
+			body:     lang.T("humanize.xstsbanned.body"),
+			fix:      lang.T("humanize.xstsbanned.fix"),
 		}, true
 
 	case containsAny(msg, "2148916233", "8015dc09"),
 		containsAny(low, "no xbox account", "create an xbox account", "xbox live profile"):
 		return diagnostic{
-			headline: "This Microsoft account doesn't have an Xbox profile yet",
-			body:     "Every MSA needs to be associated with an Xbox gamertag once before the franchise chain works.",
-			fix: "Open xbox.com and sign in with this MSA to create the profile.\n" +
-				"Once the gamertag prompt completes, re-run the same command - the tool will pick up the existing token.",
+			headline: lang.T("humanize.xstsnoprofile.headline"),
+			body:     lang.T("humanize.xstsnoprofile.body"),
+			fix:      lang.T("humanize.xstsnoprofile.fix"),
 		}, true
 
 	case containsAny(msg, "2148916235", "8015dc0b"),
 		containsAny(low, "country", "region"):
 		return diagnostic{
-			headline: "This account's region doesn't allow Xbox Live",
-			body:     "The Microsoft account's set country is one where Xbox Live isn't operated (or is sanctioned).",
-			fix: "Change the account region at account.microsoft.com/profile to one Xbox Live supports, then retry.\n" +
-				"Or use a different MSA that's already in a supported region.",
+			headline: lang.T("humanize.xstsregion.headline"),
+			body:     lang.T("humanize.xstsregion.body"),
+			fix:      lang.T("humanize.xstsregion.fix"),
 		}, true
 
 	case containsAny(msg, "2148916236", "2148916237", "2148916238", "8015dc0c", "8015dc0d", "8015dc0e"),
 		containsAny(low, "parental consent", "child account", "adult"):
 		return diagnostic{
-			headline: "Xbox Live needs parental consent for this account",
-			body:     "The account is flagged as a child / family member and a parent hasn't approved Xbox Live access yet.",
-			fix:      "Sign in to xbox.com as the family organiser and approve Xbox Live for this account, then retry.",
+			headline: lang.T("humanize.xstschild.headline"),
+			body:     lang.T("humanize.xstschild.body"),
+			fix:      lang.T("humanize.xstschild.fix"),
 		}, true
 
 	case strings.Contains(msg, "xbox auth"):
 		return diagnostic{
-			headline: "Microsoft sign-in failed during the Xbox handshake",
-			body:     "The MSA -> Xbox Live -> PlayFab chain rejected the credentials with a non-network error.",
-			fix:      "Re-running often clears transient hiccups. If it persists, delete the cached token at `" + mustTokenPath() + "` and authenticate from scratch.",
+			headline: lang.T("humanize.xstsgeneric.headline"),
+			body:     lang.T("humanize.xstsgeneric.body"),
+			fix:      lang.Tf("humanize.xstsgeneric.fix", mustTokenPath()),
 		}, true
 	}
 	return diagnostic{}, false
@@ -625,13 +593,13 @@ func friendlyService(host string) string {
 	case strings.Contains(h, "playfab"):
 		return "PlayFab"
 	case strings.Contains(h, "minecraft-services") || strings.Contains(h, "minecraftservices"):
-		return "Mojang's franchise services"
+		return lang.T("humanize.service.mojang")
 	case strings.Contains(h, "login.live.com") || strings.Contains(h, "microsoftonline"):
-		return "Microsoft sign-in"
+		return lang.T("humanize.service.mssignin")
 	case h != "":
 		return host
 	}
-	return "the upstream service"
+	return lang.T("humanize.placeholder.upstream")
 }
 
 // mustTokenPath is the path for "rm <token>" instructions, with a
@@ -657,12 +625,12 @@ func mustMCTokenPath() string {
 // writeDiagnostic renders a diagnostic plus the raw chain under
 // "Details:" so bug reports keep full provenance.
 func writeDiagnostic(w io.Writer, d diagnostic, raw error) {
-	fmt.Fprintf(w, "\n  %sError: %s%s\n\n", colorRed, d.headline, colorReset)
+	fmt.Fprintf(w, "\n  %s%s%s%s\n\n", colorRed, lang.T("humanize.render.errorprefix"), d.headline, colorReset)
 	if d.body != "" {
 		writeIndented(w, d.body, "    ")
 	}
 	if len(d.causes) > 0 {
-		fmt.Fprintf(w, "\n    Common causes:\n")
+		fmt.Fprintf(w, "\n    %s\n", lang.T("humanize.render.causeslabel"))
 		for _, c := range d.causes {
 			fmt.Fprintf(w, "      - %s\n", c)
 		}
@@ -671,14 +639,14 @@ func writeDiagnostic(w io.Writer, d diagnostic, raw error) {
 		fmt.Fprintln(w)
 		writeIndented(w, d.fix, "    ")
 	}
-	fmt.Fprintf(w, "\n  %sDetails (paste into bug reports):%s\n", colorYellow, colorReset)
+	fmt.Fprintf(w, "\n  %s%s%s\n", colorYellow, lang.T("humanize.render.detailslabel"), colorReset)
 	writeIndented(w, raw.Error(), "    ")
 	fmt.Fprintln(w)
 }
 
 // writeRawError keeps unmatched errors as a single colored line.
 func writeRawError(w io.Writer, err error) {
-	fmt.Fprintf(w, "\n  %sError: %v%s\n", colorRed, err, colorReset)
+	fmt.Fprintf(w, "\n  %s%s%v%s\n", colorRed, lang.T("humanize.render.errorprefix"), err, colorReset)
 }
 
 func writeIndented(w io.Writer, body, prefix string) {

@@ -37,6 +37,47 @@ func (f *flagSet) String(target *string, names ...string) {
 	}
 }
 
+// langFlagNames are the aliases of the global language selector. It is
+// a true global: handled once in main before dispatch, then stripped
+// from os.Args so no subcommand parser ever sees it.
+var langFlagNames = []string{"--lang", "-lang"}
+
+// extractGlobalLang pulls the --lang / -lang value out of args and
+// returns the value plus a copy of args with the flag (and its value)
+// removed. Both the space form (`--lang ru`) and the equals form
+// (`--lang=ru`) are recognized; the last occurrence wins. A trailing
+// `--lang` with no value is dropped and yields the empty value, so
+// lang.Init falls through to the env precedence rather than erroring -
+// language selection must never block a command from running.
+func extractGlobalLang(args []string) (value string, rest []string) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if isLangFlag(a) {
+			if i+1 < len(args) {
+				value = args[i+1]
+				i++
+			}
+			continue
+		}
+		if name, v, hasEq := strings.Cut(a, "="); hasEq && isLangFlag(name) {
+			value = v
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return value, rest
+}
+
+func isLangFlag(a string) bool {
+	for _, n := range langFlagNames {
+		if a == n {
+			return true
+		}
+	}
+	return false
+}
+
 // parse walks args, applies any registered flags, and returns the
 // remaining positional args. The original args slice is not modified.
 func (f *flagSet) parse(args []string) ([]string, error) {

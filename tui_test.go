@@ -474,7 +474,7 @@ func TestAppModel_EncryptEnter(t *testing.T) {
 }
 
 func TestAppModel_SettingsConfirm(t *testing.T) {
-	// Row 0 is the sign-in/out toggle; the maintenance rows always follow it,
+	// Row 0 is the language toggle; the maintenance rows always follow it,
 	// so "Clear saved and recent" is at index 1 regardless of auth state.
 	m := appModel{screen: screenSettings, settingsCursor: 1, store: store{Saved: []string{"a:1"}, Recent: []string{"b:2"}}}
 	var tm tea.Model = m
@@ -514,11 +514,11 @@ func TestAppModel_SettingsLogout(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"access_token":"x","refresh_token":"y"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Row 0 of Settings is the sign-in/out toggle. With a token on disk it reads
-	// "Sign out", so enter arms confirmLogout.
+	// The last Settings row is the sign-in/out toggle. With a token on disk it
+	// reads "Sign out", so enter arms confirmLogout.
 	m := appModel{
 		screen:         screenSettings,
-		settingsCursor: 0,
+		settingsCursor: len(settingsRows(true)) - 1,
 		ts:             oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"}),
 		fClient:        &franchise.Client{},
 		fServers:       []franchise.Server{{}},

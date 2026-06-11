@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/iteplenky/gophertunnel/minecraft/service"
 	"golang.org/x/oauth2"
 )
@@ -53,16 +54,16 @@ func loadMCToken() *service.Token {
 func saveMCToken(t *service.Token) {
 	path, err := mctokenPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not resolve mctoken cache path: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.mctoken.resolve"), err)
 		return
 	}
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not marshal mctoken: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.mctoken.marshal"), err)
 		return
 	}
 	if err := atomicWriteFile(path, ".mctoken-*.tmp", data, 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not save mctoken cache: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.mctoken.save"), err)
 	}
 }
 

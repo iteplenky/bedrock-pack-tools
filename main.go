@@ -33,6 +33,8 @@ import (
 	"os"
 	"runtime/debug"
 	"time"
+
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
 var errUsage = errors.New("usage")
@@ -54,13 +56,19 @@ func dialTimeout(fallback time.Duration) time.Duration {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
 		}
-		fmt.Fprintf(os.Stderr, "  Warning: %s=%q is not a valid duration, using %s\n", dialTimeoutEnv, v, fallback)
+		fmt.Fprint(os.Stderr, lang.Tf("usage.dialtimeout.warning", dialTimeoutEnv, v, fallback))
 	}
 	return fallback
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	// Resolve --lang / -lang first - it's a global that applies to every
+	// subcommand and the no-arg menu, so strip it from the args before
+	// dispatch and fix the active language before any user-facing output.
+	langValue, args := extractGlobalLang(os.Args[1:])
+	lang.Init(langValue, loadStore().Language)
+
+	if len(args) < 1 {
 		// No command on a real terminal: open the interactive menu.
 		if isInteractive() {
 			if err := runTUI(); err != nil {
@@ -73,27 +81,27 @@ func main() {
 	}
 
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "keys":
-		err = runKeys(os.Args[2:])
+		err = runKeys(args[1:])
 	case "download":
-		err = runDownload(os.Args[2:])
+		err = runDownload(args[1:])
 	case "decrypt":
-		err = runDecrypt(os.Args[2:])
+		err = runDecrypt(args[1:])
 	case "encrypt":
-		err = runEncrypt(os.Args[2:])
+		err = runEncrypt(args[1:])
 	case "featured":
-		err = runFeatured(os.Args[2:])
+		err = runFeatured(args[1:])
 	case "login":
-		err = runLogin(os.Args[2:])
+		err = runLogin(args[1:])
 	case "logout":
-		err = runLogout(os.Args[2:])
+		err = runLogout(args[1:])
 	case "version", "-v", "--version":
 		printVersion()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", os.Args[1])
+		fmt.Fprint(os.Stderr, lang.Tf("usage.unknown.command", args[0]))
 		printUsage()
 		os.Exit(1)
 	}
@@ -133,46 +141,5 @@ func printVersion() {
 }
 
 func printUsage() {
-	fmt.Println(`bedrock-pack-tools - dump, download, decrypt & encrypt Minecraft Bedrock resource packs
-
-Usage:
-  bedrock-pack-tools                                  (no command: interactive menu)
-  bedrock-pack-tools keys     <server:port> [output.json]
-  bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
-  bedrock-pack-tools decrypt  <pack-dir> <key> [output-dir]
-  bedrock-pack-tools decrypt  --all <keys.json> <packs-dir> [output-dir]
-  bedrock-pack-tools encrypt  [--key-out PATH] <pack-dir> [key] [output.mcpack]
-  bedrock-pack-tools featured [download <index> [output-dir]]
-  bedrock-pack-tools login
-  bedrock-pack-tools logout
-  bedrock-pack-tools version
-
-Environment:
-  BPT_DIAL_TIMEOUT  Override the keys/download dial timeout (e.g. "5m", "90s").
-                    Useful for slow servers or long ResourcePacksInfo waits.
-
-Commands:
-  keys      Connect to a Bedrock server and extract resource pack encryption keys.
-            Requires Xbox Live authentication (device code flow, token cached).
-
-  download  Connect to a Bedrock server, download all resource packs, and extract
-            them to disk. Also saves encryption keys. Packs are encrypted on disk;
-            add --decrypt to decrypt in the same step, or run 'decrypt' afterwards.
-
-  decrypt   Decrypt an encrypted resource pack using a 32-character AES key,
-            or batch-decrypt all packs matched by a keys.json file.
-
-  encrypt   Encrypt a plain resource pack into a ready-to-use .mcpack file
-            with a .mcpack.key beside it. Uses AES-256-CFB8 with per-file keys.
-            If no key is provided, one is generated automatically.
-
-  featured  List the Featured Servers and Live Events from Minecraft's
-            client-discovery API and optionally download one by index.
-
-  login     Sign in via Xbox Live (device code flow) and cache the token.
-  logout    Remove the cached Xbox + franchise tokens.
-
-  version   Show version information.
-
-Run "bedrock-pack-tools <command>" with no arguments for command-specific help.`)
+	fmt.Println(lang.T("usage.help"))
 }

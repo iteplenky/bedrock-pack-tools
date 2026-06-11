@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/iteplenky/gophertunnel/minecraft/auth"
 	"golang.org/x/oauth2"
 )
@@ -18,7 +19,7 @@ func runLogin([]string) error {
 	if _, err := getTokenSource(); err != nil {
 		return err
 	}
-	fmt.Println("  Signed in.")
+	fmt.Println(lang.T("auth.login.done"))
 	return nil
 }
 
@@ -28,7 +29,7 @@ func runLogout([]string) error {
 	if err := clearAuthCaches(); err != nil {
 		return err
 	}
-	fmt.Println("  Signed out - cached tokens removed.")
+	fmt.Println(lang.T("auth.logout.done"))
 	return nil
 }
 
@@ -94,18 +95,18 @@ func loadToken() *oauth2.Token {
 func saveToken(t *oauth2.Token) {
 	path, err := tokenPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not resolve token cache path: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.token.resolve"), err)
 		return
 	}
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not marshal token: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.token.marshal"), err)
 		return
 	}
 	// Atomic write (tmp + rename) so a crash can't leave a truncated refresh
 	// token, and an existing looser-mode file gets retightened.
 	if err := atomicWriteFile(path, ".xbox_token-*.tmp", data, 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not save token: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("auth.warn.token.save"), err)
 	}
 }
 
@@ -117,14 +118,14 @@ var tokenSourceAnnounced bool
 func getTokenSource() (oauth2.TokenSource, error) {
 	if t := loadToken(); t != nil {
 		if !tokenSourceAnnounced && os.Getenv(quietAuthEnv) == "" {
-			fmt.Println("  Auth: using cached Xbox token")
+			fmt.Println(lang.T("auth.cached"))
 			tokenSourceAnnounced = true
 		}
 		return auth.RefreshTokenSource(t), nil
 	}
 
-	fmt.Println("  Auth: no cached token - starting Xbox Live device auth")
-	fmt.Println("  A URL and code will appear - enter it in your browser.")
+	fmt.Println(lang.T("auth.start"))
+	fmt.Println(lang.T("auth.prompt.hint"))
 	fmt.Println()
 
 	tok, err := auth.TokenSource.Token()
@@ -132,7 +133,7 @@ func getTokenSource() (oauth2.TokenSource, error) {
 		return nil, fmt.Errorf("xbox auth: %w", err)
 	}
 	saveToken(tok)
-	fmt.Println("  Auth: token saved")
+	fmt.Println(lang.T("auth.saved"))
 	fmt.Println()
 	tokenSourceAnnounced = true
 	return auth.RefreshTokenSource(tok), nil

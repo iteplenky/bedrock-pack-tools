@@ -2,10 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
 const (
@@ -24,6 +25,7 @@ type store struct {
 	Saved     []string                `json:"saved"`
 	Status    map[string]recentStatus `json:"status,omitempty"`
 	Downloads []download              `json:"downloads,omitempty"`
+	Language  string                  `json:"language,omitempty"`
 }
 
 // recentStatus is the outcome of the last run against an address.
@@ -79,6 +81,13 @@ func (s *store) addRecent(addr string) {
 
 func (s *store) addSaved(addr string) {
 	s.Saved = dedupPrepend(s.Saved, addr, 0)
+	s.persist()
+}
+
+// setLanguage remembers the interface language chosen from the Settings
+// toggle, so the next launch starts in it (below the flag and BPT_LANG).
+func (s *store) setLanguage(code string) {
+	s.Language = code
 	s.persist()
 }
 
@@ -179,13 +188,13 @@ func ageLabel(stamp string) string {
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:
-		return "just now"
+		return lang.T("tui.age.justNow")
 	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return lang.Tf("tui.age.minutesAgo", int(d.Minutes()))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		return lang.Tf("tui.age.hoursAgo", int(d.Hours()))
 	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours())/24)
+		return lang.Tf("tui.age.daysAgo", int(d.Hours())/24)
 	}
 }
 

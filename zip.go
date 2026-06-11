@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/iteplenky/gophertunnel/minecraft/resource"
 )
 
@@ -85,7 +86,7 @@ func extractZip(zr *zip.Reader, outDir string) (int, error) {
 	for _, f := range zr.File {
 		fpath := filepath.Join(outDir, f.Name)
 		if !strings.HasPrefix(filepath.Clean(fpath), cleanBase) {
-			fmt.Fprintf(os.Stderr, "  %s[WARN]%s zip-slip path skipped: %s\n", colorYellow, colorReset, f.Name)
+			fmt.Fprintf(os.Stderr, "  %s[WARN]%s %s%s\n", colorYellow, colorReset, lang.T("packs.zipSlipSkipped"), f.Name)
 			continue
 		}
 

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/cfb8"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
 func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
@@ -38,22 +39,13 @@ func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
 
 func runDecrypt(args []string) error {
 	if len(args) < 1 {
-		fmt.Println(`Usage:
-  bedrock-pack-tools decrypt <pack-dir> <key> [output-dir]
-  bedrock-pack-tools decrypt --all <keys.json> <packs-dir> [output-dir]
-
-Decrypt a single encrypted resource pack:
-  bedrock-pack-tools decrypt ./my_packs/SomePack_v1.0.0 YOUR_32_CHAR_KEY
-
-Batch-decrypt all packs matched by a keys.json file:
-  bedrock-pack-tools decrypt --all my_keys.json ./my_packs/
-  bedrock-pack-tools decrypt --all my_keys.json ./my_packs/ ./decrypted/`)
+		fmt.Println(lang.T("packs.decrypt.usage"))
 		return errUsage
 	}
 
 	if args[0] == "--all" {
 		if len(args) < 3 {
-			fmt.Println("Usage: bedrock-pack-tools decrypt --all <keys.json> <packs-dir> [output-dir]")
+			fmt.Println(lang.T("packs.decrypt.usageAll"))
 			return errUsage
 		}
 		outDir := ""
@@ -64,7 +56,7 @@ Batch-decrypt all packs matched by a keys.json file:
 	}
 
 	if len(args) < 2 {
-		fmt.Println("Usage: bedrock-pack-tools decrypt <pack-dir> <key> [output-dir]")
+		fmt.Println(lang.T("packs.decrypt.usageSingle"))
 		return errUsage
 	}
 	outDir := strings.TrimRight(args[0], "/\\") + "_decrypted"
@@ -132,14 +124,14 @@ func decryptAll(keysFile, packsDir, outBase string) error {
 
 		packUUID, err := readPackUUID(packDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  %s[WARN]%s %s - %v\n", colorYellow, colorReset, entry.Name(), err)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.decrypt.warn", colorYellow, colorReset, entry.Name(), err))
 			continue
 		}
 
 		keyInfo, ok := keys[packUUID]
 		if !ok {
-			fmt.Printf("  %s[SKIP]%s %s - no key for UUID %s\n",
-				colorYellow, colorReset, entry.Name(), packUUID)
+			fmt.Print(lang.Tf("packs.decrypt.skip",
+				colorYellow, colorReset, entry.Name(), packUUID))
 			continue
 		}
 
@@ -152,7 +144,7 @@ func decryptAll(keysFile, packsDir, outBase string) error {
 	}
 
 	if len(jobs) == 0 {
-		fmt.Println("  No packs matched.")
+		fmt.Println(lang.T("packs.decrypt.noMatch"))
 		return nil
 	}
 
@@ -179,10 +171,10 @@ func decryptAll(keysFile, packsDir, outBase string) error {
 
 				mu.Lock()
 				if err != nil {
-					fmt.Printf("  %s[ERROR]%s %s: %v\n", colorRed, colorReset, job.name, err)
+					fmt.Print(lang.Tf("packs.decrypt.jobError", colorRed, colorReset, job.name, err))
 				} else {
-					fmt.Printf("  %s[OK]%s %s (%d decrypted, %d copied, %d errors)\n",
-						colorCyan, colorReset, job.name, stats.decrypted, stats.copied, stats.errors)
+					fmt.Print(lang.Tf("packs.decrypt.jobOk",
+						colorCyan, colorReset, job.name, stats.decrypted, stats.copied, stats.errors))
 					succeeded++
 				}
 				mu.Unlock()
@@ -195,7 +187,7 @@ func decryptAll(keysFile, packsDir, outBase string) error {
 	if abs, err := filepath.Abs(outBase); err == nil {
 		dest = abs
 	}
-	fmt.Printf("\n  Decrypted %d/%d packs\n  Location: %s\n", succeeded, len(jobs), dest)
+	fmt.Print(lang.Tf("packs.decrypt.allDone", succeeded, len(jobs), dest))
 	if succeeded == 0 {
 		return fmt.Errorf("all %d packs failed to decrypt", len(jobs))
 	}
@@ -204,17 +196,17 @@ func decryptAll(keysFile, packsDir, outBase string) error {
 
 func decryptPack(packDir, packKey, outDir string) error {
 	fmt.Println()
-	fmt.Println("  Pack:   " + packDir)
-	fmt.Println("  Key:    " + packKey)
-	fmt.Println("  Output: " + outDir)
+	fmt.Println(lang.Tf("packs.decrypt.packLabel", packDir))
+	fmt.Println(lang.Tf("packs.decrypt.keyLabel", packKey))
+	fmt.Println(lang.Tf("packs.decrypt.outputLabel", outDir))
 	fmt.Println()
 
 	stats, err := decryptPackInner(packDir, packKey, outDir)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("  Done! %d decrypted, %d copied, %d errors\n",
-		stats.decrypted, stats.copied, stats.errors)
+	fmt.Print(lang.Tf("packs.decrypt.done",
+		stats.decrypted, stats.copied, stats.errors))
 	return nil
 }
 
@@ -266,7 +258,7 @@ func decryptPackInner(packDir, packKey, outDir string) (packStats, error) {
 	// from contents.json - copy them across so the decrypted pack loads.
 	for _, name := range []string{manifestJSON, packIconPNG} {
 		if err := copyIfMissing(packDir, outDir, name); err != nil {
-			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, name, err)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.decrypt.copyErr", colorRed, colorReset, name, err))
 			stats.errors++
 		}
 	}
@@ -295,7 +287,7 @@ func decryptPackFiles(packDir, outDir string, entries []contentsEntry) packStats
 		}
 		dstPath := filepath.Join(outDir, entry.Path)
 		if !strings.HasPrefix(filepath.Clean(dstPath), cleanBase) {
-			fmt.Fprintf(os.Stderr, "    %s[WARN]%s path escapes output dir, skipped: %s\n", colorYellow, colorReset, entry.Path)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.decrypt.escaped", colorYellow, colorReset, entry.Path))
 			escaped++
 			continue
 		}
@@ -315,7 +307,7 @@ func decryptPackFiles(packDir, outDir string, entries []contentsEntry) packStats
 	for _, r := range results {
 		switch {
 		case r.err != nil:
-			fmt.Fprintf(os.Stderr, "    %s[ERR]%s %s: %v\n", colorRed, colorReset, r.path, r.err)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.decrypt.fileErr", colorRed, colorReset, r.path, r.err))
 			stats.errors++
 		case r.decrypted:
 			stats.decrypted++

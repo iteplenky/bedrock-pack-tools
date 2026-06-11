@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/iteplenky/gophertunnel/minecraft"
 	"github.com/iteplenky/gophertunnel/minecraft/protocol"
 	"github.com/iteplenky/gophertunnel/minecraft/protocol/packet"
@@ -102,18 +103,18 @@ func (d *downloadTracker) onPackStart(id uuid.UUID, version string, current, tot
 		if d.connectSpinner != nil {
 			d.connectSpinner.stop("")
 		}
-		fmt.Printf("  Connected! %d packs, downloading...\n", total)
+		fmt.Print(lang.Tf("packs.download.connected", total))
 	}
 	return true
 }
 
 func (d *downloadTracker) onPacket(header packet.Header, payload []byte, src, dst net.Addr) {
 	if d.verbose {
-		dir := "S→C"
+		dir := lang.T("packs.download.dirLabelRecv")
 		if src.String() == "client" {
-			dir = "C→S"
+			dir = lang.T("packs.download.dirLabel")
 		}
-		fmt.Printf("%s  [DEBUG] %s packet 0x%02x (%d bytes)\n", clearLine, dir, header.PacketID, len(payload))
+		fmt.Print(lang.Tf("packs.download.debugPacket", clearLine, dir, header.PacketID, len(payload)))
 	}
 
 	switch header.PacketID {
@@ -128,7 +129,7 @@ func (d *downloadTracker) onPacket(header packet.Header, payload []byte, src, ds
 			if d.connectSpinner != nil {
 				d.connectSpinner.stop("")
 			}
-			fmt.Println("  Authenticated, loading packs...")
+			fmt.Println(lang.T("packs.download.authenticated"))
 		}
 	case packet.IDResourcePacksInfo:
 		d.onResourcePacksInfo(payload)
@@ -145,7 +146,7 @@ func (d *downloadTracker) onPacket(header packet.Header, payload []byte, src, ds
 		d.mu.Unlock()
 		if shouldPrint && elapsed > 0 {
 			speed := float64(received) / elapsed / 1024
-			fmt.Printf("%s  Downloading: %.1f MB (%.0f KB/s)", clearLine, float64(received)/1024/1024, speed)
+			fmt.Print(lang.Tf("packs.download.progress", clearLine, float64(received)/1024/1024, speed))
 		}
 	}
 }
@@ -153,15 +154,15 @@ func (d *downloadTracker) onPacket(header packet.Header, payload []byte, src, ds
 func (d *downloadTracker) onResourcePacksInfo(payload []byte) {
 	packs, err := parseResourcePacks(payload)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+		fmt.Fprint(os.Stderr, lang.Tf("packs.download.warning", err))
 		return
 	}
 
 	var cdnPacks []protocol.TexturePackInfo
 	for _, tp := range packs {
 		if d.verbose {
-			fmt.Printf("  [DEBUG] Pack: %s v%s size=%d key=%q url=%q\n",
-				tp.UUID, tp.Version, tp.Size, tp.ContentKey, tp.DownloadURL)
+			fmt.Print(lang.Tf("packs.download.debugPack",
+				tp.UUID, tp.Version, tp.Size, tp.ContentKey, tp.DownloadURL))
 		}
 		if tp.DownloadURL != "" {
 			cdnPacks = append(cdnPacks, tp)
@@ -190,18 +191,18 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 	}
 
 	uid := tp.UUID.String()
-	fmt.Printf("%s  CDN download: %s v%s from %s\n", clearLine, uid, tp.Version, tp.DownloadURL)
+	fmt.Print(lang.Tf("packs.download.cdnStart", clearLine, uid, tp.Version, tp.DownloadURL))
 
 	tmpPath, size, err := d.fetchToTemp(tp.DownloadURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  %s[ERR]%s CDN download failed: %v\n", colorRed, colorReset, err)
+		fmt.Fprint(os.Stderr, lang.Tf("packs.download.cdnFailed", colorRed, colorReset, err))
 		return
 	}
 	// No-op on the rename-to-final-path branch below; cleans up the
 	// extract-to-dir branch where the tmp file isn't renamed.
 	defer os.Remove(tmpPath)
 
-	fmt.Printf("  %s[CDN]%s Downloaded %.1f KB\n", colorGreen, colorReset, float64(size)/1024)
+	fmt.Print(lang.Tf("packs.download.cdnDownloaded", colorGreen, colorReset, float64(size)/1024))
 	d.cdnDownloaded.Add(1)
 
 	if d.outDir == "" {
@@ -214,19 +215,19 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 	if isZipFile(tmpPath) {
 		f, err := os.Open(tmpPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  %s[ERR]%s open tmp: %v\n", colorRed, colorReset, err)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.download.openTmp", colorRed, colorReset, err))
 			return
 		}
 		zr, zipErr := zip.NewReader(f, size)
 		if zipErr != nil {
 			f.Close()
-			fmt.Fprintf(os.Stderr, "  %s[ERR]%s zip parse: %v\n", colorRed, colorReset, zipErr)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.download.zipParse", colorRed, colorReset, zipErr))
 			return
 		}
 		n, extractErr := extractZip(zr, packDir)
 		f.Close()
 		if extractErr != nil {
-			fmt.Fprintf(os.Stderr, "  %s[ERR]%s Extract failed: %v\n", colorRed, colorReset, extractErr)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.download.extractFailed", colorRed, colorReset, extractErr))
 			return
 		}
 		// TexturePackInfo has no human-readable name; pull it from
@@ -241,17 +242,17 @@ func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
 				}
 			}
 		}
-		fmt.Printf("  %s[OK]%s  %-50s (%d files)\n", colorCyan, colorReset, dirName, n)
+		fmt.Print(lang.Tf("packs.download.okFiles", colorCyan, colorReset, dirName, n))
 		return
 	}
 
 	outFile := filepath.Join(d.outDir, dirName+mcpackExt)
 	if err := os.Rename(tmpPath, outFile); err != nil {
-		fmt.Fprintf(os.Stderr, "  %s[ERR]%s Save failed: %v\n", colorRed, colorReset, err)
+		fmt.Fprint(os.Stderr, lang.Tf("packs.download.saveFailed", colorRed, colorReset, err))
 		return
 	}
 	_ = os.Chmod(outFile, 0644)
-	fmt.Printf("  %s[OK]%s  Saved as %s (%.1f KB)\n", colorCyan, colorReset, outFile, float64(size)/1024)
+	fmt.Print(lang.Tf("packs.download.savedAs", colorCyan, colorReset, outFile, float64(size)/1024))
 }
 
 // fetchToTemp streams the URL body to a tmp file inside d.outDir (so
@@ -349,24 +350,7 @@ func runDownload(args []string) error {
 	}
 
 	if len(args) < 1 {
-		fmt.Println(`Usage: bedrock-pack-tools download [-v] [--decrypt] <server:port> [output-dir]
-
-Connect to a Minecraft Bedrock server, download all resource packs, and
-extract them to disk. Also saves encryption keys.
-
-Flags:
-  -v, --verbose   Show all packet IDs for debugging
-  -d, --decrypt   Decrypt the packs right after downloading (one step)
-
-The output directory will contain one folder per pack: Name_vVersion/
-A keys file (server_keys.json) is also saved alongside.
-
-Without --decrypt the downloaded packs are still encrypted; turn them into
-editable directories with: bedrock-pack-tools decrypt --all <keys.json> <output-dir>
-
-Examples:
-  bedrock-pack-tools download <server:port>
-  bedrock-pack-tools download --decrypt <server:port> ./packs/`)
+		fmt.Println(lang.T("packs.download.usage"))
 		return errUsage
 	}
 
@@ -377,10 +361,10 @@ Examples:
 	}
 	keysFile := filepath.Join(outDir, sanitizeServerAddr(server)+keysSuffix)
 
-	fmt.Println("\n  ┌─ Pack Downloader ─────────────────────────")
-	fmt.Println("  │ Server: " + server)
-	fmt.Println("  │ Output: " + outDir)
-	fmt.Println("  └──────────────────────────────────────────")
+	fmt.Println(lang.T("packs.download.bannerTop"))
+	fmt.Println(lang.Tf("packs.download.bannerServer", server))
+	fmt.Println(lang.Tf("packs.download.bannerOutput", outDir))
+	fmt.Println(lang.T("packs.download.bannerBottom"))
 
 	tokenSource, err := getTokenSource()
 	if err != nil {
@@ -414,7 +398,7 @@ Examples:
 	}
 
 	fmt.Println()
-	tracker.connectSpinner = startSpinner("Connecting to " + server)
+	tracker.connectSpinner = startSpinner(lang.Tf("packs.download.connecting", server))
 	start := time.Now()
 
 	conn, err := dialer.DialContext(ctx, "raknet", server)
@@ -436,48 +420,48 @@ Examples:
 		// servers ship every pack by URL and never finish the spawn handshake
 		// for a non-playing client.
 		if total > 0 && cdnCount >= total {
-			fmt.Printf("\n  Downloaded %d/%d packs via CDN.\n", cdnCount, total)
+			fmt.Print(lang.Tf("packs.download.cdnComplete", cdnCount, total))
 			if keyCount > 0 {
-				fmt.Printf("  Keys: %d -> %s\n", keyCount, keysFile)
+				fmt.Print(lang.Tf("packs.download.keysSaved", keyCount, keysFile))
 				if decrypt {
 					fmt.Println()
 					if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
-						fmt.Printf("\n  Decrypt step failed: %v\n", derr)
-						fmt.Printf("  Packs and keys are saved - rerun:  bedrock-pack-tools decrypt --all %s %s\n\n", keysFile, outDir)
+						fmt.Print(lang.Tf("packs.download.decryptFailed", derr))
+						fmt.Print(lang.Tf("packs.download.rerunDecrypt2", keysFile, outDir))
 						return errPartialResult
 					}
 					fmt.Println()
 					return nil
 				}
-				fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+				fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, outDir))
 			} else {
-				fmt.Println("  Packs are unencrypted - ready to use, no decryption needed.")
+				fmt.Println(lang.T("packs.download.unencrypted"))
 			}
 			fmt.Println()
 			return nil
 		}
 
 		if cdnCount > 0 {
-			fmt.Printf("\n  Connection closed after %.1fs, but %d packs downloaded via CDN\n", elapsed.Seconds(), cdnCount)
+			fmt.Print(lang.Tf("packs.download.closedWithCdn", elapsed.Seconds(), cdnCount))
 			if keyCount > 0 {
-				fmt.Printf("  Keys: %d -> %s\n", keyCount, keysFile)
+				fmt.Print(lang.Tf("packs.download.keysSaved", keyCount, keysFile))
 				if decrypt {
 					fmt.Println()
 					if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
-						fmt.Printf("\n  Decrypt step failed: %v\n", derr)
-						fmt.Printf("  Packs and keys are saved - rerun:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+						fmt.Print(lang.Tf("packs.download.decryptFailed", derr))
+						fmt.Print(lang.Tf("packs.download.rerunDecrypt1", keysFile, outDir))
 					}
 				} else {
-					fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+					fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, outDir))
 				}
 			}
 			fmt.Println()
 			return errPartialResult
 		}
 		if keyCount > 0 {
-			fmt.Printf("\n  Connection closed after %.1fs, but %d keys saved -> %s\n", elapsed.Seconds(), keyCount, keysFile)
-			fmt.Println("  Packs could not be downloaded (server didn't complete handshake).")
-			fmt.Printf("  Retry:  bedrock-pack-tools download %s\n", server)
+			fmt.Print(lang.Tf("packs.download.closedWithKeys", elapsed.Seconds(), keyCount, keysFile))
+			fmt.Println(lang.T("packs.download.noHandshake"))
+			fmt.Print(lang.Tf("packs.download.retry", server))
 			return errPartialResult
 		}
 		return fmt.Errorf("connection to %s failed: %w", server, err)
@@ -490,13 +474,13 @@ Examples:
 	totalReceived := tracker.received
 	tracker.mu.Unlock()
 
-	fmt.Printf("  Downloaded %d packs (%.1f MB) in %.1fs\n\n",
-		len(packs), float64(totalReceived)/1024/1024, elapsed.Seconds())
+	fmt.Print(lang.Tf("packs.download.summary",
+		len(packs), float64(totalReceived)/1024/1024, elapsed.Seconds()))
 
 	// Wait for in-flight CDN downloads spawned from onResourcePacksInfo.
 	tracker.cdnWg.Wait()
 
-	fmt.Println("  Extracting...")
+	fmt.Println(lang.T("packs.download.extracting"))
 
 	keys := make(map[string]keyEntry)
 	var saved, encrypted, plain int
@@ -528,10 +512,10 @@ Examples:
 
 		n, err := extractResourcePack(pack, packDir)
 		if err != nil {
-			fmt.Printf("  %s[ERR]%s  %s: %v\n", colorRed, colorReset, dirName, err)
+			fmt.Print(lang.Tf("packs.download.extractErr", colorRed, colorReset, dirName, err))
 			continue
 		}
-		fmt.Printf("  %s[OK]%s   %-50s (%d files)\n", colorCyan, colorReset, dirName, n)
+		fmt.Print(lang.Tf("packs.download.extractOk", colorCyan, colorReset, dirName, n))
 		saved++
 	}
 
@@ -541,27 +525,27 @@ Examples:
 		}
 	}
 
-	fmt.Printf("\n  Saved: %d/%d packs (%d encrypted, %d plain)\n", saved, len(packs), encrypted, plain)
+	fmt.Print(lang.Tf("packs.download.savedCounts", saved, len(packs), encrypted, plain))
 
 	if len(keys) > 0 {
 		if err := saveKeys(keys, keysFile); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not save keys: %v\n", err)
+			fmt.Fprint(os.Stderr, lang.Tf("packs.download.keysWarn", err))
 		}
-		fmt.Printf("  Keys: %d -> %s\n", len(keys), keysFile)
+		fmt.Print(lang.Tf("packs.download.keysSaved", len(keys), keysFile))
 		if decrypt {
 			fmt.Println()
 			// The packs and keys are already on disk; a decrypt-step failure
 			// is recoverable, so report a partial result (exit 2) rather than
 			// a hard failure that implies nothing was saved.
 			if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
-				fmt.Printf("\n  Decrypt step failed: %v\n", derr)
-				fmt.Printf("  Packs and keys are saved - rerun:  bedrock-pack-tools decrypt --all %s %s\n\n", keysFile, outDir)
+				fmt.Print(lang.Tf("packs.download.decryptFailed", derr))
+				fmt.Print(lang.Tf("packs.download.rerunDecrypt2", keysFile, outDir))
 				return errPartialResult
 			}
 			fmt.Println()
 			return nil
 		}
-		fmt.Printf("  To decrypt:  bedrock-pack-tools decrypt --all %s %s\n", keysFile, outDir)
+		fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, outDir))
 	}
 	fmt.Println()
 	return nil

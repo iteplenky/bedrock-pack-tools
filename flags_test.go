@@ -159,6 +159,86 @@ func TestFlagSet_UnknownArgsPassThrough(t *testing.T) {
 	}
 }
 
+// TestExtractGlobalLang covers the global --lang / -lang strip that
+// main does before dispatch. The flag and its value must be removed
+// from the returned args so no subcommand parser ever sees them, and
+// every other arg (including unrelated flags) must pass through in
+// order.
+func TestExtractGlobalLang(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		wantValue string
+		wantRest  []string
+	}{
+		{
+			name:      "no lang flag",
+			args:      []string{"download", "host:port"},
+			wantValue: "",
+			wantRest:  []string{"download", "host:port"},
+		},
+		{
+			name:      "long form space",
+			args:      []string{"--lang", "ru", "download", "host:port"},
+			wantValue: "ru",
+			wantRest:  []string{"download", "host:port"},
+		},
+		{
+			name:      "single-dash form space",
+			args:      []string{"-lang", "ru", "keys", "host:port"},
+			wantValue: "ru",
+			wantRest:  []string{"keys", "host:port"},
+		},
+		{
+			name:      "equals form",
+			args:      []string{"--lang=ru", "featured"},
+			wantValue: "ru",
+			wantRest:  []string{"featured"},
+		},
+		{
+			name:      "lang flag after the subcommand",
+			args:      []string{"encrypt", "./pack", "--lang", "en"},
+			wantValue: "en",
+			wantRest:  []string{"encrypt", "./pack"},
+		},
+		{
+			name:      "lang interleaved with other flags",
+			args:      []string{"download", "-v", "--lang", "ru", "--decrypt", "host:port"},
+			wantValue: "ru",
+			wantRest:  []string{"download", "-v", "--decrypt", "host:port"},
+		},
+		{
+			name:      "last occurrence wins",
+			args:      []string{"--lang", "en", "keys", "--lang=ru", "host:port"},
+			wantValue: "ru",
+			wantRest:  []string{"keys", "host:port"},
+		},
+		{
+			name:      "trailing lang with no value is dropped, value empty",
+			args:      []string{"version", "--lang"},
+			wantValue: "",
+			wantRest:  []string{"version"},
+		},
+		{
+			name:      "no args at all",
+			args:      []string{},
+			wantValue: "",
+			wantRest:  []string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			value, rest := extractGlobalLang(tc.args)
+			if value != tc.wantValue {
+				t.Errorf("value = %q, want %q", value, tc.wantValue)
+			}
+			if !reflect.DeepEqual(rest, tc.wantRest) {
+				t.Errorf("rest = %#v, want %#v", rest, tc.wantRest)
+			}
+		})
+	}
+}
+
 // TestFlagSet_MixedBoolAndString exercises both registrations on the
 // same flagSet - the realistic future-extension case.
 func TestFlagSet_MixedBoolAndString(t *testing.T) {

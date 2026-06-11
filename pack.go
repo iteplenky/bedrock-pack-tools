@@ -11,6 +11,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"github.com/iteplenky/gophertunnel/minecraft/protocol"
 	"github.com/iteplenky/gophertunnel/minecraft/protocol/packet"
 )
@@ -65,7 +66,7 @@ func (ks *keyStore) merge(collected map[string]keyEntry) {
 		return
 	}
 	if err := saveKeys(ks.keys, ks.file); err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: could not save keys: %v\n", err)
+		fmt.Fprintf(os.Stderr, lang.T("packs.warn.keysSaveFailed"), err)
 	}
 }
 
