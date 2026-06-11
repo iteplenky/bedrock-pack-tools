@@ -1234,7 +1234,13 @@ func (m appModel) menuView() string {
 	}
 	b.WriteString("\n  " + colorDim + sections[m.menuCursor].desc() + colorReset + "\n")
 	if m.loadErr != nil {
-		b.WriteString("\n  " + colorRed + lang.Tf("tui.error.loadFeatured", m.loadErr.Error()) + colorReset + "\n")
+		if d, ok := humanize(m.loadErr); ok {
+			var buf strings.Builder
+			writeDiagnostic(&buf, d, m.loadErr)
+			b.WriteString(buf.String())
+		} else {
+			b.WriteString("\n  " + colorRed + lang.Tf("tui.error.loadFeatured", m.loadErr.Error()) + colorReset + "\n")
+		}
 	}
 	b.WriteString("\n")
 	b.WriteString(hintBar(

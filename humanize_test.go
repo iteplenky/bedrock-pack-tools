@@ -235,6 +235,13 @@ func TestHumanize(t *testing.T) {
 			wantHeadlinePart: "doesn't have an Xbox profile",
 		},
 		{
+			name:             "XSTS: no Xbox profile (literal sign-in message)",
+			err:              errors.New(`mint mctoken: login playfab: request xbox live token: request xsts token for "http://playfab.xboxlive.com/": POST https://sisu.xboxlive.com/authorize: Your account currently does not have an Xbox profile. Please create one at https://signup.live.com/signup`),
+			wantOK:           true,
+			wantHeadlinePart: "doesn't have an Xbox profile",
+			wantFixPart:      "xbox.com",
+		},
+		{
 			name:             "XSTS: account banned",
 			err:              errors.New("xbox auth: xsts Identity ban"),
 			wantOK:           true,

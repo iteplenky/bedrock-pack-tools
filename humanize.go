@@ -485,7 +485,7 @@ func classifyXSTS(msg, low string) (diagnostic, bool) {
 		}, true
 
 	case containsAny(msg, "2148916233", "8015dc09"),
-		containsAny(low, "no xbox account", "create an xbox account", "xbox live profile"):
+		containsAny(low, "no xbox account", "create an xbox account", "xbox live profile", "does not have an xbox profile", "signup.live.com"):
 		return diagnostic{
 			headline: lang.T("humanize.xstsnoprofile.headline"),
 			body:     lang.T("humanize.xstsnoprofile.body"),
