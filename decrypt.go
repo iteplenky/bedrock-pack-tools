@@ -15,6 +15,14 @@ import (
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 )
 
+// decryptContentsJSON decodes an encrypted contents.json. The file opens
+// with a fixed 256-byte header (see buildContentsHeader for the exact
+// layout: a version field, the 0xFC 0xB9 0xCF 0x9B magic, a 0x24 separator
+// and the ASCII pack UUID); everything after the header is AES-256-CFB8
+// ciphertext keyed by the pack's 32-byte master key, with the IV being the
+// key's first 16 bytes (see internal/cfb8). It strips the header, decrypts
+// the remainder, trims the trailing padding, and parses the JSON listing of
+// per-file keys.
 func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
 	if len(data) < contentsHeaderSize {
 		return nil, fmt.Errorf("%w: %d bytes", errPackTruncated, len(data))
