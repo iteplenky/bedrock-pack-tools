@@ -38,8 +38,8 @@ Flags:
   -v, --verbose   Show all packet IDs for debugging
   -d, --decrypt   Decrypt the packs right after downloading (one step)
 
-The output directory will contain one folder per pack: Name_vVersion/
-A keys file (server_keys.json) is also saved alongside.
+Output is grouped under <output-dir>/<server>/: one folder per pack
+(Name_vVersion/), plus a keys.json with the encryption keys.
 
 Without --decrypt the downloaded packs are still encrypted; turn them into
 editable directories with: bedrock-pack-tools decrypt --all <keys.json> <output-dir>
@@ -176,8 +176,8 @@ Examples:
   -v, --verbose   Показать все ID пакетов для отладки
   -d, --decrypt   Расшифровать паки сразу после загрузки (в один шаг)
 
-Выходной каталог будет содержать по одной папке на пак: Name_vVersion/
-Рядом также сохраняется файл ключей (server_keys.json).
+Вывод группируется в <output-dir>/<server>/: по одной папке на пак
+(Name_vVersion/) и файл keys.json с ключами шифрования.
 
 Без --decrypt скачанные паки остаются зашифрованными; превратите их в
 редактируемые каталоги командой: bedrock-pack-tools decrypt --all <keys.json> <output-dir>
@@ -258,7 +258,7 @@ Examples:
   bedrock-pack-tools encrypt [--key-out PATH] <pack-dir> [key] [output.mcpack]
 
 Зашифровать каталог обычного ресурс-пака с помощью AES-256-CFB8.
-Создаёт готовый к использованию файл .mcpack и файл .mcpack.key.
+Создает готовый к использованию файл .mcpack и файл .mcpack.key.
 
 Если ключ опущен, генерируется случайный ключ из 32 символов.
 Если выход опущен, по умолчанию используется <pack-name>.mcpack в текущем каталоге.

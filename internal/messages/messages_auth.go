@@ -30,7 +30,7 @@ func init() {
 		"auth.cached":      "  Auth: используется кэшированный токен Xbox",
 		"auth.start":       "  Auth: кэшированного токена нет - начинаем вход в Xbox Live по коду устройства",
 		"auth.prompt.hint": "  Появятся URL и код - введите его в браузер.",
-		"auth.saved":       "  Auth: токен сохранён",
+		"auth.saved":       "  Auth: токен сохранен",
 
 		"auth.warn.token.resolve": "Внимание: не удалось определить путь к кэшу токена: %v\n",
 		"auth.warn.token.marshal": "Внимание: не удалось сериализовать токен: %v\n",
@@ -40,7 +40,7 @@ func init() {
 		"auth.warn.mctoken.marshal": "Внимание: не удалось сериализовать mctoken: %v\n",
 		"auth.warn.mctoken.save":    "Внимание: не удалось сохранить кэш mctoken: %v\n",
 
-		"auth.warn.device.notPersisted":  "Внимание: device.ID не сохранён (%v); когорта будет нестабильной\n",
+		"auth.warn.device.notPersisted":  "Внимание: device.ID не сохранен (%v); когорта будет нестабильной\n",
 		"auth.warn.device.persistFailed": "Внимание: не удалось сохранить device.ID: %v\n",
 	})
 }

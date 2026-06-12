@@ -154,6 +154,14 @@ func T(key string) string {
 // registered string is the format; a (the args) fills its verbs. When
 // the key is missing, T returns the key and Sprintf passes it through
 // unchanged (no verbs to fill).
+//
+// The format string is resolved at runtime, so go vet's printf analyzer
+// cannot check verb/argument agreement at Tf/T call sites. The catalog
+// symmetry test (internal/messages) guards that EN and RU carry the same
+// verb sequence per key, but nothing verifies that sequence against the
+// args passed at a call site. So when you edit a format message, keep its
+// verbs - especially %w - in step across both languages and the call
+// site, or the mismatch only surfaces at runtime as %!v(MISSING).
 func Tf(key string, a ...any) string {
 	return fmt.Sprintf(T(key), a...)
 }

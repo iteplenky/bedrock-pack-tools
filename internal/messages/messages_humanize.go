@@ -262,7 +262,7 @@ func init() {
 
 		// franchise.ErrExperienceOffline
 		"humanize.venue.headline": "У этого слота сейчас нет активной площадки",
-		"humanize.venue.body":     "Live Events и часть партнёрских слотов доступны только в окно своего события. Вне окна Mojang возвращает 404 на endpoint входа.",
+		"humanize.venue.body":     "Live Events и часть партнерских слотов доступны только в окно своего события. Вне окна Mojang возвращает 404 на endpoint входа.",
 		"humanize.venue.fix": "Запустите `bedrock-pack-tools featured` позже - адрес площадки появится, когда слот станет активным.\n" +
 			"Или выберите другой индекс из списка; записи, где уже показан host:port, доступны в любое время.",
 
@@ -274,7 +274,7 @@ func init() {
 
 		// franchise.ErrAuthRejected
 		"humanize.authrejected.headline": "Сервисы franchise Mojang отклонили идентификацию Xbox",
-		"humanize.authrejected.body":     "Мы перевыпустили токен один раз, и Mojang всё равно его отклонил. Обычно это значит, что сам аккаунт Microsoft теперь в плохом состоянии, а не только наш кэш.",
+		"humanize.authrejected.body":     "Мы перевыпустили токен один раз, и Mojang все равно его отклонил. Обычно это значит, что сам аккаунт Microsoft теперь в плохом состоянии, а не только наш кэш.",
 		"humanize.authrejected.fix": "Удалите кэшированные токены и авторизуйтесь заново с нуля:\n" +
 			"  rm \"%s\"\n" +
 			"  rm \"%s\"\n" +
@@ -283,10 +283,10 @@ func init() {
 		// errPackNoManifest
 		"humanize.nomanifest.headline": "Эта папка не является корректным ресурс-паком",
 		"humanize.nomanifest.body":     "В паке Bedrock на верхнем уровне должен быть manifest.json с полем header.uuid. Мы его не нашли.",
-		"humanize.nomanifest.fix":      "Убедитесь, что указываете на папку, которая содержит manifest.json напрямую (а не на её родителя). Если вы распаковали .mcpack, манифест находится на один уровень внутри.",
+		"humanize.nomanifest.fix":      "Убедитесь, что указываете на папку, которая содержит manifest.json напрямую (а не на ее родителя). Если вы распаковали .mcpack, манифест находится на один уровень внутри.",
 
 		// errPackBadManifest
-		"humanize.badmanifest.headline": "manifest.json не читается или повреждён",
+		"humanize.badmanifest.headline": "manifest.json не читается или поврежден",
 		"humanize.badmanifest.body":     "Файл существует, но мы не смогли прочитать его или распарсить как JSON.",
 		"humanize.badmanifest.fix":      "Откройте manifest.json и проверьте, что это корректный JSON (висячие запятые, «умные» кавычки и BOM - частые причины).",
 
@@ -297,18 +297,18 @@ func init() {
 
 		// errPackWrongKey
 		"humanize.wrongkey.headline": "Расшифровка не удалась - вероятно, неверный ключ для этого пака",
-		"humanize.wrongkey.body":     "Ключи паков Bedrock индивидуальны для каждого пака. Ключ от другого пака даёт нечитаемый результат.",
-		"humanize.wrongkey.fix": "Откройте keys.json, полученный из `download` (или файл ключей партнёра), и найдите ключ по UUID пака (header.uuid в manifest.json).\n" +
+		"humanize.wrongkey.body":     "Ключи паков Bedrock индивидуальны для каждого пака. Ключ от другого пака дает нечитаемый результат.",
+		"humanize.wrongkey.fix": "Откройте keys.json, полученный из `download` (или файл ключей партнера), и найдите ключ по UUID пака (header.uuid в manifest.json).\n" +
 			"Если у вас один keys.json и один пак, перепроверьте, что UUID пака совпадает с записью ключа.",
 
 		// errPackTruncated
-		"humanize.truncated.headline": "Файл пака повреждён (contents.json обрезан)",
+		"humanize.truncated.headline": "Файл пака поврежден (contents.json обрезан)",
 		"humanize.truncated.body":     "Файл contents.json пака короче, чем заголовок шифрования, с которого он должен начинаться - загрузка, скорее всего, прервалась.",
-		"humanize.truncated.fix":      "Запустите `bedrock-pack-tools download` повторно для того же сервера или получите пак заново оттуда, откуда он пришёл.",
+		"humanize.truncated.fix":      "Запустите `bedrock-pack-tools download` повторно для того же сервера или получите пак заново оттуда, откуда он пришел.",
 
 		// errPackBadProtocol
 		"humanize.badprotocol.headline": "Сервер прислал неожиданный pack-info payload",
-		"humanize.badprotocol.body":     "Пакет ResourcePacksInfo не разобрался по схеме протокола, под которую скомпилирован gophertunnel. Обычно это значит, что Mojang выпустил новую версию Bedrock, а инструмент ещё не догнал.",
+		"humanize.badprotocol.body":     "Пакет ResourcePacksInfo не разобрался по схеме протокола, под которую скомпилирован gophertunnel. Обычно это значит, что Mojang выпустил новую версию Bedrock, а инструмент еще не догнал.",
 		"humanize.badprotocol.fix":      "Проверьте последний релиз на github.com/iteplenky/bedrock-pack-tools и обновитесь. Если у вас уже последняя версия, откройте issue с адресом сервера и версией вашего клиента Bedrock.",
 
 		// errPackBadZip
@@ -318,14 +318,14 @@ func init() {
 
 		// errPackEmpty
 		"humanize.empty.headline": "В паке нечего шифровать",
-		"humanize.empty.body":     "Шифрование создаёт загружаемый в Bedrock .mcpack только при наличии хотя бы одного ресурсного файла помимо manifest.json и pack_icon.png. Мы таких не нашли.",
-		"humanize.empty.fix": "Убедитесь, что указываете на корень пака и что в нём есть ожидаемые файлы текстур / поведения / звуков.\n" +
-			"Если вы действительно хотели упаковать только манифест, используйте любой zip-инструмент - шифрование здесь ничего не даёт.",
+		"humanize.empty.body":     "Шифрование создает загружаемый в Bedrock .mcpack только при наличии хотя бы одного ресурсного файла помимо manifest.json и pack_icon.png. Мы таких не нашли.",
+		"humanize.empty.fix": "Убедитесь, что указываете на корень пака и что в нем есть ожидаемые файлы текстур / поведения / звуков.\n" +
+			"Если вы действительно хотели упаковать только манифест, используйте любой zip-инструмент - шифрование здесь ничего не дает.",
 
 		// classifyOAuth: device-code timing
 		"humanize.oauthtiming.headline": "Вход Microsoft не завершился вовремя",
-		"humanize.oauthtiming.body":     "Код устройства Xbox Live истёк, прежде чем вы успели ввести его на microsoft.com/link.",
-		"humanize.oauthtiming.fix":      "Запустите ту же команду снова. Новый код живёт всего ~15 минут, так что завершайте шаг в браузере быстро.",
+		"humanize.oauthtiming.body":     "Код устройства Xbox Live истек, прежде чем вы успели ввести его на microsoft.com/link.",
+		"humanize.oauthtiming.fix":      "Запустите ту же команду снова. Новый код живет всего ~15 минут, так что завершайте шаг в браузере быстро.",
 
 		// classifyOAuth: invalid_grant
 		"humanize.oauthgrant.headline": "Кэшированный refresh-токен Microsoft больше недействителен",
@@ -353,7 +353,7 @@ func init() {
 		"humanize.fsrofs.fix":      "Укажите вывод туда, куда можно писать; домашняя папка - безопасный вариант по умолчанию.",
 
 		// classifyTLS: UnknownAuthorityError
-		"humanize.tlsunknownca.headline": "Не прошёл TLS handshake для %s",
+		"humanize.tlsunknownca.headline": "Не прошел TLS handshake для %s",
 		"humanize.tlsunknownca.body":     "Сертификат сервера подписан CA, которому ваша система не доверяет. Чаще всего причина - корпоративный прокси, инспектирующий HTTPS.",
 		"humanize.tlsunknownca.causes": "Корпоративный / школьный прокси, инспектирующий HTTPS (Zscaler, Netskope, Palo Alto)\n" +
 			"Устаревший системный набор CA (редко; старые дистрибутивы Linux)",
@@ -367,11 +367,11 @@ func init() {
 
 		// classifyTLS: CertificateInvalidError, other reasons
 		"humanize.tlsinvalid.headline": "Сертификат TLS недействителен для %s",
-		"humanize.tlsinvalid.body":     "Сертификат не прошёл проверку: %s.",
+		"humanize.tlsinvalid.body":     "Сертификат не прошел проверку: %s.",
 		"humanize.tlsinvalid.fix":      "Проверьте URL и системные часы. Если проблема сохраняется, перехватите сертификат командой `openssl s_client -connect %s:443` для диагностики.",
 
 		// classifyTLS: stringified handshake/bad-certificate fallback
-		"humanize.tlshandshake.headline": "Не прошёл TLS handshake для %s",
+		"humanize.tlshandshake.headline": "Не прошел TLS handshake для %s",
 		"humanize.tlshandshake.body":     "Слой TLS отклонил соединение, не дойдя до прикладного протокола.",
 		"humanize.tlshandshake.fix":      "Часто это корпоративный HTTPS-прокси или устаревший набор CA. Попробуйте команду в другой сети, чтобы локализовать причину.",
 
@@ -382,8 +382,8 @@ func init() {
 
 		// dnsDiag
 		"humanize.dns.headline": "Не удалось разрешить DNS для %s",
-		"humanize.dns.body":     "Ваша система не смогла разрешить имя хоста. Инструмент даже не дошёл до сетевого запроса.",
-		"humanize.dns.causes": "Кэптив-портал (wifi в отеле/кафе, в который ещё не вошли)\n" +
+		"humanize.dns.body":     "Ваша система не смогла разрешить имя хоста. Инструмент даже не дошел до сетевого запроса.",
+		"humanize.dns.causes": "Кэптив-портал (wifi в отеле/кафе, в который еще не вошли)\n" +
 			"Сбой DNS-сервера или неправильно настроенный resolver\n" +
 			"VPN с поломанным split-DNS",
 		"humanize.dns.fix": "Попробуйте `nslookup %s`.\n" +
@@ -402,9 +402,9 @@ func init() {
 
 		// appLayerKickDiag
 		"humanize.applayerkick.bodybase":   "Handshake RakNet и вход Xbox прошли успешно. Прикладной слой сервера отклонил сессию уже после - типичная анти-бот эвристика крупных сетей Bedrock.",
-		"humanize.applayerkick.bodyreason": "\n\nПричина, возвращённая сервером:\n  %s",
+		"humanize.applayerkick.bodyreason": "\n\nПричина, возвращенная сервером:\n  %s",
 		"humanize.applayerkick.headline":   "%s отключил нас после handshake",
-		"humanize.applayerkick.fix":        "Многие крупные партнёрские серверы Bedrock используют анти-бот эвристики, которые отклоняют любого клиента, чей отпечаток пакетов не совпадает с официальным клиентом. Общего обходного пути со стороны инструмента нет - такие серверы не хотят пускать сторонние клиенты.",
+		"humanize.applayerkick.fix":        "Многие крупные партнерские серверы Bedrock используют анти-бот эвристики, которые отклоняют любого клиента, чей отпечаток пакетов не совпадает с официальным клиентом. Общего обходного пути со стороны инструмента нет - такие серверы не хотят пускать сторонние клиенты.",
 
 		// timeoutDiag: game-server variant
 		"humanize.timeoutgame.headline": "Не удалось подключиться к серверу Bedrock %s",
@@ -427,7 +427,7 @@ func init() {
 
 		// timeoutDiag: generic variant
 		"humanize.timeout.headline": "Не удалось достучаться до %s",
-		"humanize.timeout.body":     "Запрос истёк, не дойдя до сервера.",
+		"humanize.timeout.body":     "Запрос истек, не дойдя до сервера.",
 		"humanize.timeout.causes": "Сервер выключен или перегружен\n" +
 			"Ваша сеть блокирует назначение (firewall, ISP, VPN split-tunnel)",
 		"humanize.timeout.fix": "Попробуйте снова через несколько минут. Если продолжает падать, сохраните цепочку из раздела Details ниже и проверьте доступность через curl или браузер.",
@@ -438,7 +438,7 @@ func init() {
 		"humanize.xstsbanned.fix":      "Используйте другой аккаунт Microsoft. Баны - это решение политики Microsoft, оспаривается только через account.microsoft.com.",
 
 		// classifyXSTS: no Xbox profile
-		"humanize.xstsnoprofile.headline": "У этого аккаунта Microsoft ещё нет профиля Xbox",
+		"humanize.xstsnoprofile.headline": "У этого аккаунта Microsoft еще нет профиля Xbox",
 		"humanize.xstsnoprofile.body":     "Каждый аккаунт MSA нужно один раз связать с геймертегом Xbox, прежде чем цепочка franchise заработает.",
 		"humanize.xstsnoprofile.fix": "Откройте xbox.com и войдите с этим аккаунтом MSA, чтобы создать профиль.\n" +
 			"Когда запрос геймертега завершится, запустите ту же команду снова - инструмент подхватит существующий токен.",
@@ -451,18 +451,18 @@ func init() {
 
 		// classifyXSTS: parental consent
 		"humanize.xstschild.headline": "Для этого аккаунта Xbox Live требует родительского согласия",
-		"humanize.xstschild.body":     "Аккаунт помечен как детский / член семьи, и родитель ещё не одобрил доступ к Xbox Live.",
+		"humanize.xstschild.body":     "Аккаунт помечен как детский / член семьи, и родитель еще не одобрил доступ к Xbox Live.",
 		"humanize.xstschild.fix":      "Войдите на xbox.com как организатор семьи и одобрите Xbox Live для этого аккаунта, затем повторите.",
 
 		// classifyXSTS: generic xbox-auth fallback
 		"humanize.xstsgeneric.headline": "Вход Microsoft не удался во время handshake Xbox",
-		"humanize.xstsgeneric.body":     "При входе через MSA -> Xbox Live -> PlayFab учётные данные были отклонены с ошибкой, не связанной с сетью.",
+		"humanize.xstsgeneric.body":     "При входе через MSA -> Xbox Live -> PlayFab учетные данные были отклонены с ошибкой, не связанной с сетью.",
 		"humanize.xstsgeneric.fix":      "Повторный запуск часто устраняет временные сбои. Если повторяется, удалите кэшированный токен по пути `%s` и авторизуйтесь с нуля.",
 
 		// writeDiagnostic chrome
 		"humanize.render.errorprefix":  "Ошибка: ",
 		"humanize.render.causeslabel":  "Частые причины:",
-		"humanize.render.detailslabel": "Details (вставьте в отчёт об ошибке):",
+		"humanize.render.detailslabel": "Details (вставьте в отчет об ошибке):",
 
 		// Fallback host placeholders
 		"humanize.placeholder.upstream":     "вышестоящего сервиса",
