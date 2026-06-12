@@ -84,6 +84,17 @@ func TestDecryptContentsJSON_WrongKey(t *testing.T) {
 	}
 }
 
+// TestDecryptContentsJSON_BadKeyLen: a wrong-length key (a truncated or typo'd
+// paste) reports errPackBadKeyLen rather than errPackWrongKey, so the user is
+// told the length is off instead of being pointed at the wrong pack's key.
+func TestDecryptContentsJSON_BadKeyLen(t *testing.T) {
+	data := make([]byte, contentsHeaderSize+16)
+	_, err := decryptContentsJSON(data, "tooShort")
+	if !errors.Is(err, errPackBadKeyLen) {
+		t.Fatalf("err = %v, want chain to include errPackBadKeyLen", err)
+	}
+}
+
 // TestDecryptPackFiles_PathEscapeSkipped pins the zip-slip guard: a malicious
 // contents.json entry pointing outside outDir must be skipped, not written.
 func TestDecryptPackFiles_PathEscapeSkipped(t *testing.T) {

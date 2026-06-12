@@ -24,6 +24,12 @@ import (
 // the remainder, trims the trailing padding, and parses the JSON listing of
 // per-file keys.
 func decryptContentsJSON(data []byte, packKey string) (*contentsFile, error) {
+	// Reject a wrong-length key up front (mirrors the encrypt path) so a
+	// truncated/typo'd paste reports "bad key length" instead of being
+	// misclassified as a wrong-but-valid key further down.
+	if len(packKey) != 32 {
+		return nil, fmt.Errorf("%w: got %d characters", errPackBadKeyLen, len(packKey))
+	}
 	if len(data) < contentsHeaderSize {
 		return nil, fmt.Errorf("%w: %d bytes", errPackTruncated, len(data))
 	}
