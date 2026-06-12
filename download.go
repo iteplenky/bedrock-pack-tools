@@ -75,6 +75,11 @@ type downloadTracker struct {
 	startTime    time.Time
 	received     int64
 	connected    bool
+	// waiting is set under mu right before runDownload calls cdnWg.Wait().
+	// onResourcePacksInfo checks it under the same lock and skips spawning
+	// once it is set, so a cdnWg.Go (Add from zero) can never race the Wait
+	// on the dial-error path. The mutex gives the happens-before either way.
+	waiting      bool
 	lastProgress time.Time
 
 	keys          *keyStore
@@ -176,9 +181,18 @@ func (d *downloadTracker) onResourcePacksInfo(payload []byte) {
 
 	d.keys.merge(collectKeys(packs))
 
-	for _, tp := range cdnPacks {
-		d.cdnWg.Go(func() { d.downloadFromURL(tp) })
+	// Spawn the CDN downloads under mu, gated on waiting, so the cdnWg.Go
+	// Adds are serialized against runDownload's cdnWg.Wait(). If a wait has
+	// already begun (dial-error/abort path), the remaining CDN packs are
+	// simply not fetched - acceptable, since that path reports only what
+	// actually landed.
+	d.mu.Lock()
+	if !d.waiting {
+		for _, tp := range cdnPacks {
+			d.cdnWg.Go(func() { d.downloadFromURL(tp) })
+		}
 	}
+	d.mu.Unlock()
 }
 
 func (d *downloadTracker) downloadFromURL(tp protocol.TexturePackInfo) {
@@ -410,6 +424,9 @@ func runDownload(args []string) error {
 	tracker.connectSpinner.stop("")
 
 	if err != nil {
+		tracker.mu.Lock()
+		tracker.waiting = true
+		tracker.mu.Unlock()
 		tracker.cdnWg.Wait()
 
 		keyCount := tracker.keys.count()
@@ -482,6 +499,9 @@ func runDownload(args []string) error {
 		len(packs), float64(totalReceived)/1024/1024, elapsed.Seconds()))
 
 	// Wait for in-flight CDN downloads spawned from onResourcePacksInfo.
+	tracker.mu.Lock()
+	tracker.waiting = true
+	tracker.mu.Unlock()
 	tracker.cdnWg.Wait()
 
 	fmt.Println(lang.T("packs.download.extracting"))
