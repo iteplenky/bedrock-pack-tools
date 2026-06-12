@@ -52,6 +52,16 @@ func TestHumanizeClassifiesUnderRussian(t *testing.T) {
 			err:     fmt.Errorf(lang.T("keys.connect.failed"), "play.example.net:19132", "dial minecraft 1.2.3.4:5->6.7.8.9:19132: nope"),
 			wantKey: lang.Tf("humanize.applayerkick.headline", "play.example.net:19132"),
 		},
+		{
+			name:    "game-server generic raknet handshake",
+			err:     fmt.Errorf(lang.T("keys.connect.failed"), "play.example.net:19132", "handshake produced no usable response"),
+			wantKey: lang.Tf("humanize.raknet.headline", "play.example.net:19132"),
+		},
+		{
+			name:    "game-server kick/disconnect",
+			err:     fmt.Errorf(lang.T("keys.connect.failed"), "play.example.net:19132", "disconnected: whitelist only"),
+			wantKey: lang.Tf("humanize.kick.headline", "play.example.net:19132"),
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

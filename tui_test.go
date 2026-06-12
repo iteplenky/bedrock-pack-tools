@@ -280,6 +280,26 @@ func TestDecryptOutBase(t *testing.T) {
 	}
 }
 
+// TestDecryptOutBaseStaysUnderBase guards the per-server grouping: a
+// server address (untrusted - a CLI arg or a saved-list entry) is
+// sanitized so the output dir can never escape the base directory via
+// path separators or traversal.
+func TestDecryptOutBaseStaysUnderBase(t *testing.T) {
+	const base = "/packs"
+	for _, server := range []string{
+		"play.example.net:19132",
+		"a/../../etc/passwd",
+		"../../../escape",
+		"x/../../../../tmp/evil:19132",
+	} {
+		out := decryptOutBase(base, server)
+		rel, err := filepath.Rel(base, out)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Errorf("decryptOutBase(%q, %q) = %q escapes base (rel=%q, err=%v)", base, server, out, rel, err)
+		}
+	}
+}
+
 func TestAppModel_DecryptNotDecryptableShowsNote(t *testing.T) {
 	m := appModel{
 		screen:   screenDecrypt,

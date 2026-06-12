@@ -50,6 +50,26 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestStoreLanguageRoundTrip covers the Settings language toggle: the
+// chosen language is persisted to servers.json and survives a reload, so
+// the choice sticks across runs (and feeds lang.Init's precedence).
+func TestStoreLanguageRoundTrip(t *testing.T) {
+	s := store{path: filepath.Join(t.TempDir(), "servers.json")}
+	s.setLanguage("ru")
+
+	got := store{path: s.path}
+	data, err := os.ReadFile(got.path)
+	if err != nil {
+		t.Fatalf("store file not written: %v", err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal store: %v", err)
+	}
+	if got.Language != "ru" {
+		t.Errorf("persisted Language = %q, want %q", got.Language, "ru")
+	}
+}
+
 func TestStoreDownloadsAndStatus(t *testing.T) {
 	s := store{path: filepath.Join(t.TempDir(), "servers.json")}
 
