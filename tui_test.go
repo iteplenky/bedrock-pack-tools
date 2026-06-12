@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/franchise"
+	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 	"golang.org/x/oauth2"
 )
 
@@ -625,5 +626,80 @@ func TestStartRun_SignedOutGuard(t *testing.T) {
 	em, _ := m.startRun([]job{{label: "pack", argv: []string{"encrypt", "/tmp/pack"}}}, actionDownload)
 	if em.screen != screenRunning {
 		t.Errorf("offline encrypt job should run even when signed out: screen=%d", em.screen)
+	}
+}
+
+// TestAppModel_SettingsLangToggle exercises the Settings language row (cursor
+// 0): enter flips EN<->RU in place and persists the choice to the store.
+// SetActive mutates a process global, so pin English at the start for
+// determinism and restore it on exit - t.Cleanup runs even on t.Fatal, which
+// keeps the toggle from leaking into the many tests that assert English output.
+func TestAppModel_SettingsLangToggle(t *testing.T) {
+	lang.SetActive(lang.English)
+	t.Cleanup(func() { lang.SetActive(lang.English) })
+
+	// Empty store path keeps setLanguage off disk.
+	m := appModel{screen: screenSettings, settingsCursor: 0}
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am := tm.(appModel)
+	if lang.Current() != lang.Russian || am.store.Language != "ru" || am.note == "" {
+		t.Fatalf("first toggle: lang=%v storeLang=%q note=%q", lang.Current(), am.store.Language, am.note)
+	}
+	tm, _ = am.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	am = tm.(appModel)
+	if lang.Current() != lang.English || am.store.Language != "en" {
+		t.Fatalf("second toggle should flip back: lang=%v storeLang=%q", lang.Current(), am.store.Language)
+	}
+}
+
+// TestRecordOutcome covers the per-server anchoring added with the grouped
+// download layout: a successful job is listed in the decrypt section only when
+// a keys.json actually landed under <cwd>/<server>/.
+func TestRecordOutcome(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd() // recordOutcome resolves the cwd the same way
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const addr = "play.example.net:19132"
+	serverDir := filepath.Join(cwd, sanitizeServerAddr(addr))
+	keysFile := filepath.Join(serverDir, keysFileName)
+
+	// No keys.json yet: the os.Stat gate records nothing in the decrypt list.
+	var m appModel
+	m.recordOutcome(job{label: "srv", address: addr}, true)
+	if len(m.store.Downloads) != 0 {
+		t.Fatalf("without keys.json: want 0 downloads, got %d", len(m.store.Downloads))
+	}
+
+	// keys.json present: one download, anchored on <cwd>/<server>/keys.json.
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keysFile, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.recordOutcome(job{label: "srv", address: addr}, true)
+	if len(m.store.Downloads) != 1 {
+		t.Fatalf("with keys.json: want 1 download, got %d", len(m.store.Downloads))
+	}
+	if d := m.store.Downloads[0]; d.Dir != serverDir || d.KeysFile != keysFile {
+		t.Fatalf("download anchored wrong:\n  Dir=%q KeysFile=%q\n want Dir=%q KeysFile=%q", d.Dir, d.KeysFile, serverDir, keysFile)
+	}
+
+	// A failed job records status only - never a download entry.
+	var m2 appModel
+	m2.recordOutcome(job{label: "srv", address: addr}, false)
+	if len(m2.store.Downloads) != 0 {
+		t.Fatalf("ok=false: want 0 downloads, got %d", len(m2.store.Downloads))
 	}
 }
