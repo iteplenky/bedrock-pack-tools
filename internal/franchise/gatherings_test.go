@@ -310,6 +310,23 @@ func TestJoinExperience_ShapelessIsOffline(t *testing.T) {
 	}
 }
 
+func TestLiveEvents_404IsEmpty(t *testing.T) {
+	// A 404 from config/public means "no active events" - liveEvents should
+	// return an empty list with no error, so the menu shows no warning.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	got, err := liveEvents(context.Background(), u, "MCToken x")
+	if err != nil {
+		t.Errorf("got err %v, want nil", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d events, want 0", len(got))
+	}
+}
+
 // ---------- venue ----------
 
 func TestVenueAddress_OK(t *testing.T) {

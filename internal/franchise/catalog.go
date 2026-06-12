@@ -175,6 +175,13 @@ func liveEvents(ctx context.Context, gatheringsURI *url.URL, authHeader string) 
 	u.RawQuery = clientQuery().Encode()
 	body, err := request(ctx, http.MethodGet, u.String(), nil, authHeader)
 	if err != nil {
+		// A 404 from config/public means "no active events" - the in-game
+		// client gets the same status for an empty cohort. Surface it as an
+		// empty list, not an error, so the menu doesn't flash a warning for
+		// the common case.
+		if httpStatusOf(err) == http.StatusNotFound {
+			return nil, nil
+		}
 		return nil, err
 	}
 	env, err := decodeAPI[apiResult[[]gathering]](body, "gatherings")
