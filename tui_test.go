@@ -262,7 +262,7 @@ func TestAppModel_DecryptForwardBuildsDecryptJob(t *testing.T) {
 		t.Fatalf("decrypt enter: screen=%d jobs=%d cmd=%v", am.screen, len(am.jobs), cmd)
 	}
 	// The decrypt run is grouped by server and the destination is recorded.
-	wantOut := decryptOutBase(d.Dir, d.Address)
+	wantOut := filepath.Join(d.Dir, decryptedDir)
 	want := []string{"decrypt", "--all", d.KeysFile, d.Dir, wantOut}
 	if strings.Join(am.jobs[0].argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("decrypt job argv = %v, want %v", am.jobs[0].argv, want)
@@ -274,7 +274,7 @@ func TestAppModel_DecryptForwardBuildsDecryptJob(t *testing.T) {
 
 func TestDecryptOutBase(t *testing.T) {
 	got := decryptOutBase("/packs", "play.example.net:19132")
-	want := filepath.Join("/packs", "decrypted", "play_example_net_19132")
+	want := filepath.Join("/packs", "play_example_net_19132", "decrypted")
 	if got != want {
 		t.Fatalf("decryptOutBase = %q, want %q", got, want)
 	}

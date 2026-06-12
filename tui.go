@@ -1009,7 +1009,10 @@ func (m *appModel) recordOutcome(j job, ok bool) {
 	if err != nil {
 		return
 	}
-	keysFile := filepath.Join(cwd, sanitizeServerAddr(j.address)+keysSuffix)
+	// download groups each server's output under <cwd>/<server>/, so the
+	// decrypt section is anchored on that folder, not the bare cwd.
+	serverDir := filepath.Join(cwd, sanitizeServerAddr(j.address))
+	keysFile := filepath.Join(serverDir, keysFileName)
 	// Only list it in the decrypt section if a keys file landed - i.e. the
 	// server shipped encrypted packs. Plain packs need no decryption.
 	if _, err := os.Stat(keysFile); err != nil {
@@ -1018,7 +1021,7 @@ func (m *appModel) recordOutcome(j job, ok bool) {
 	m.store.addDownload(download{
 		Label:    j.label,
 		Address:  j.address,
-		Dir:      cwd,
+		Dir:      serverDir,
 		KeysFile: keysFile,
 		When:     nowStamp(),
 	})
@@ -1763,13 +1766,10 @@ func inspectDownload(d download) decryptState {
 		}
 	}
 	// Already-decrypted output (re-decrypting just overwrites it, so this is
-	// only a hint, not a lock). Gated on a known per-server address: with an
-	// empty address decryptOutBase collapses to the shared decrypted/ parent,
-	// which would falsely light off another server's output.
-	if d.Address != "" {
-		if out, err := os.ReadDir(decryptOutBase(d.Dir, d.Address)); err == nil && len(out) > 0 {
-			st.decrypted = true
-		}
+	// only a hint, not a lock). d.Dir is this download's own server folder,
+	// so its decrypted/ subdir is unambiguous.
+	if out, err := os.ReadDir(filepath.Join(d.Dir, decryptedDir)); err == nil && len(out) > 0 {
+		st.decrypted = true
 	}
 	return st
 }
@@ -1827,10 +1827,10 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d := m.dls[i]
 			// Anchor the re-download to this entry's own dir (not the menu's cwd)
 			// with an explicit argv, so it refreshes THIS entry in place.
-			out := decryptOutBase(d.Dir, d.Address)
+			out := filepath.Join(d.Dir, decryptedDir)
 			return m.startRun([]job{{
 				label:  d.Label,
-				argv:   []string{"download", "--decrypt", d.Address, d.Dir},
+				argv:   []string{"download", "--decrypt", d.Address, filepath.Dir(d.Dir)},
 				outDir: out,
 			}}, actionDownloadDecrypt)
 		}
@@ -1847,7 +1847,7 @@ func (m appModel) handleDecryptKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !st.decryptable() {
 				continue
 			}
-			out := decryptOutBase(d.Dir, d.Address)
+			out := filepath.Join(d.Dir, decryptedDir)
 			if d.Address == "" {
 				// No saved server name to file the output under - use the
 				// deterministic <dir>_decrypted sibling instead of the shared

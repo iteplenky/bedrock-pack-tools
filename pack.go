@@ -21,6 +21,7 @@ const (
 	manifestJSON       = "manifest.json"
 	packIconPNG        = "pack_icon.png"
 	keysSuffix         = "_keys.json"
+	keysFileName       = "keys.json"
 	mcpackExt          = ".mcpack"
 	contentsHeaderSize = 256
 )

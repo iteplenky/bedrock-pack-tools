@@ -43,11 +43,11 @@ const (
 	decryptedDir     = "decrypted"
 )
 
-// decryptOutBase is where a download's decrypted packs land, grouped by
-// server: <baseDir>/decrypted/<server>. Keeps multiple servers' decrypted
-// packs from mixing in one folder.
+// decryptOutBase is where a download's decrypted packs land: inside the
+// server's own folder, at <baseDir>/<server>/decrypted. Grouping by server
+// keeps multiple servers' packs (encrypted and decrypted) from mixing.
 func decryptOutBase(baseDir, server string) string {
-	return filepath.Join(baseDir, decryptedDir, sanitizeServerAddr(server))
+	return filepath.Join(baseDir, sanitizeServerAddr(server), decryptedDir)
 }
 
 // sanitizeVersion strips path separators (and other unsafe runes) from a
@@ -359,11 +359,15 @@ func runDownload(args []string) error {
 	if len(args) > 1 {
 		outDir = args[1]
 	}
-	keysFile := filepath.Join(outDir, sanitizeServerAddr(server)+keysSuffix)
+	// Group everything for this server under its own subdirectory so dumps
+	// from multiple servers don't pile up (or collide on a shared pack name)
+	// in one folder: <outDir>/<server>/{<Pack>_vVer/, keys.json, decrypted/}.
+	serverDir := filepath.Join(outDir, sanitizeServerAddr(server))
+	keysFile := filepath.Join(serverDir, keysFileName)
 
 	fmt.Println(lang.T("packs.download.bannerTop"))
 	fmt.Println(lang.Tf("packs.download.bannerServer", server))
-	fmt.Println(lang.Tf("packs.download.bannerOutput", outDir))
+	fmt.Println(lang.Tf("packs.download.bannerOutput", serverDir))
 	fmt.Println(lang.T("packs.download.bannerBottom"))
 
 	tokenSource, err := getTokenSource()
@@ -371,7 +375,7 @@ func runDownload(args []string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(outDir, 0755); err != nil {
+	if err := os.MkdirAll(serverDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
@@ -383,7 +387,7 @@ func runDownload(args []string) error {
 
 	tracker := &downloadTracker{
 		keys:       newKeyStore(keysFile),
-		outDir:     outDir,
+		outDir:     serverDir,
 		verbose:    verbose,
 		startTime:  time.Now(),
 		httpClient: &http.Client{Timeout: 2 * time.Minute},
@@ -425,15 +429,15 @@ func runDownload(args []string) error {
 				fmt.Print(lang.Tf("packs.download.keysSaved", keyCount, keysFile))
 				if decrypt {
 					fmt.Println()
-					if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
+					if derr := decryptAll(keysFile, serverDir, decryptOutBase(outDir, server)); derr != nil {
 						fmt.Print(lang.Tf("packs.download.decryptFailed", derr))
-						fmt.Print(lang.Tf("packs.download.rerunDecrypt2", keysFile, outDir))
+						fmt.Print(lang.Tf("packs.download.rerunDecrypt2", keysFile, serverDir))
 						return errPartialResult
 					}
 					fmt.Println()
 					return nil
 				}
-				fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, outDir))
+				fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, serverDir))
 			} else {
 				fmt.Println(lang.T("packs.download.unencrypted"))
 			}
@@ -447,12 +451,12 @@ func runDownload(args []string) error {
 				fmt.Print(lang.Tf("packs.download.keysSaved", keyCount, keysFile))
 				if decrypt {
 					fmt.Println()
-					if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
+					if derr := decryptAll(keysFile, serverDir, decryptOutBase(outDir, server)); derr != nil {
 						fmt.Print(lang.Tf("packs.download.decryptFailed", derr))
-						fmt.Print(lang.Tf("packs.download.rerunDecrypt1", keysFile, outDir))
+						fmt.Print(lang.Tf("packs.download.rerunDecrypt1", keysFile, serverDir))
 					}
 				} else {
-					fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, outDir))
+					fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, serverDir))
 				}
 			}
 			fmt.Println()
@@ -497,7 +501,7 @@ func runDownload(args []string) error {
 			dirName = dirName + "_" + uid[:8]
 		}
 		usedDirs[dirName] = true
-		packDir := filepath.Join(outDir, dirName)
+		packDir := filepath.Join(serverDir, dirName)
 
 		if pack.Encrypted() || pack.ContentKey() != "" {
 			encrypted++
@@ -537,15 +541,15 @@ func runDownload(args []string) error {
 			// The packs and keys are already on disk; a decrypt-step failure
 			// is recoverable, so report a partial result (exit 2) rather than
 			// a hard failure that implies nothing was saved.
-			if derr := decryptAll(keysFile, outDir, decryptOutBase(outDir, server)); derr != nil {
+			if derr := decryptAll(keysFile, serverDir, decryptOutBase(outDir, server)); derr != nil {
 				fmt.Print(lang.Tf("packs.download.decryptFailed", derr))
-				fmt.Print(lang.Tf("packs.download.rerunDecrypt2", keysFile, outDir))
+				fmt.Print(lang.Tf("packs.download.rerunDecrypt2", keysFile, serverDir))
 				return errPartialResult
 			}
 			fmt.Println()
 			return nil
 		}
-		fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, outDir))
+		fmt.Print(lang.Tf("packs.download.toDecrypt", keysFile, serverDir))
 	}
 	fmt.Println()
 	return nil

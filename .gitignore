@@ -6,3 +6,7 @@ bedrock-pack-tools
 
 # Downloaded keys (contain server-specific data)
 *_keys.json
+keys.json
+
+# Decrypted pack output
+decrypted/

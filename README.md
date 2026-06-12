@@ -137,9 +137,11 @@ From the command line:
 
 A few flags the table can't carry:
 
-- `download --decrypt` downloads every pack *and* decrypts it in one step;
-  decrypted output is grouped under `decrypted/<server>/` so multiple dumps
-  don't mix. Without it, the tool prints the `decrypt --all` command to run next.
+- `download` puts each server's output in its own `<server>/` folder (the packs,
+  a `keys.json`, and a `decrypted/` subfolder when you pass `--decrypt`), so dumps
+  from multiple servers never pile up or collide on a shared pack name. `--decrypt`
+  decrypts every pack in the same step; without it the tool prints the
+  `decrypt --all` command to run next.
 - `decrypt --all <keys.json> <packs-dir>` batch-decrypts, matching packs to keys
   by the UUID in each pack's `manifest.json`, so the directory layout doesn't matter.
 - `encrypt` generates a fresh 32-character AES-256-CFB8 key per file; pass your
