@@ -35,6 +35,10 @@ import (
 	"time"
 
 	"github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
+
+	// Side-effect import: the message catalogs register their EN/RU
+	// entries with lang via init() before main runs.
+	_ "github.com/iteplenky/bedrock-pack-tools/v3/internal/messages"
 )
 
 var errUsage = errors.New("usage")

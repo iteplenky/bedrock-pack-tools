@@ -61,6 +61,7 @@ package lang
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"sync/atomic"
 )
@@ -112,9 +113,7 @@ func Register(l Lang, entries map[string]string) {
 		m = map[string]string{}
 		catalog[l] = m
 	}
-	for k, v := range entries {
-		m[k] = v
-	}
+	maps.Copy(m, entries)
 }
 
 // Current returns the active language resolved by Init (English until
@@ -125,6 +124,16 @@ func Current() Lang { return Lang(active.Load()) }
 // to call from any goroutine; readers via T/Current observe the new
 // value on their next call.
 func SetActive(l Lang) { active.Store(int32(l)) }
+
+// Snapshot returns a copy of every message registered for l. It exists
+// for tests and tooling that inspect the catalog (e.g. checking EN/RU
+// key and format-verb symmetry); mutating the result does not affect
+// the live catalog.
+func Snapshot(l Lang) map[string]string {
+	out := make(map[string]string, len(catalog[l]))
+	maps.Copy(out, catalog[l])
+	return out
+}
 
 // T returns the message registered for key in the active language. It
 // falls back to the English entry, then to key itself when no entry

@@ -1,4 +1,4 @@
-package main
+package messages
 
 import "github.com/iteplenky/bedrock-pack-tools/v3/internal/lang"
 
