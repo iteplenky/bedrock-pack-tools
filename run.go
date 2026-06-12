@@ -232,6 +232,11 @@ func runArgvCmd(argv []string) tea.Cmd {
 		}
 		cmd := exec.Command(self, argv...)
 		cmd.Env = envWithout(os.Environ(), "NO_COLOR")
+		// Pin the child to the menu's active language so its streamed
+		// progress and summary never render in a different language than the
+		// surrounding chrome. BPT_LANG outranks the persisted store and all
+		// locale vars in lang.Init, so this holds on the flag-only path too.
+		cmd.Env = append(cmd.Env, "BPT_LANG="+lang.Current().String())
 
 		pr, pw := io.Pipe()
 		cmd.Stdout = pw
@@ -294,6 +299,8 @@ func loginCmd() tea.Cmd {
 	}
 	c := exec.Command(self, "login")
 	c.Env = envWithout(os.Environ(), quietAuthEnv)
+	// Match the device-code prompts to the menu's active language.
+	c.Env = append(c.Env, "BPT_LANG="+lang.Current().String())
 	return tea.ExecProcess(c, func(err error) tea.Msg { return loginDoneMsg{err: err} })
 }
 
